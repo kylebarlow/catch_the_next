@@ -76,6 +76,30 @@ def test_get_stops_clamps_radius():
     assert int(sent_params["radius"]) <= 2000
 
 
+DEPARTURES_RESPONSE_NULL_FIELDS = {
+    "stops": [
+        {
+            "departures": [
+                {
+                    "departure": None,
+                    "trip": None,
+                    "departure_time": "25:00:00",
+                    "schedule_relationship": "SCHEDULED",
+                }
+            ],
+            "children": None,
+        }
+    ]
+}
+
+
+def test_get_departures_handles_null_departure_and_children():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_NULL_FIELDS)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert "departures" in result
+
+
 def test_get_departures_returns_sorted():
     with req_mock.Mocker() as m:
         m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE)

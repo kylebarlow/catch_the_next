@@ -71,22 +71,22 @@ def get_departures(stop_id, next_seconds=7200):
     now_minutes = _now_minutes()
 
     def collect(stop_data):
-        for dep in stop_data.get("departures", []):
-            stt = dep.get("departure", {})
+        for dep in stop_data.get("departures") or []:
+            stt = dep.get("departure") or {}
             scheduled_utc = stt.get("scheduled_utc", "")
             gtfs_offset = dep.get("departure_time", "")
             minutes = _parse_minutes(scheduled_utc, gtfs_offset, now_minutes)
             if minutes is None or minutes < 0:
                 continue
-            route = dep.get("trip", {}).get("route", {})
+            route = (dep.get("trip") or {}).get("route") or {}
             departures.append({
                 "route_short_name": route.get("route_short_name", ""),
-                "headsign": dep.get("trip", {}).get("trip_headsign", ""),
+                "headsign": (dep.get("trip") or {}).get("trip_headsign", ""),
                 "departure_minutes": minutes,
                 "departure_time": scheduled_utc or gtfs_offset,
                 "schedule_relationship": dep.get("schedule_relationship", "SCHEDULED"),
             })
-        for child in stop_data.get("children", []):
+        for child in stop_data.get("children") or []:
             collect(child)
 
     for s in data.get("stops", []):

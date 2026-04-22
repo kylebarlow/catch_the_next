@@ -20,8 +20,9 @@ class DockerIntegrationTest {
     private val testLat = 37.7766595
     private val testLon = -122.3946275
 
-    // Caltrain 4th and King parent station
+    // Caltrain 4th and King: parent station and a child platform stop
     private val caltrainStopId = 2173133854L
+    private val caltrainSouthboundPlatformId = 2173134179L
 
     private val serverDir: File by lazy {
         // Gradle runs tests with CWD = app/
@@ -100,5 +101,20 @@ class DockerIntegrationTest {
             departures.all { it.routeShortName.isNotBlank() || it.routeLongName.isNotBlank() },
             "All departures should have route info"
         )
+    }
+
+    @Test
+    fun `departures API handles child platform stop with null children field`() {
+        // Platform stops return "children": null from Transitland, which previously caused a 500.
+        val client = TransitlandClient(apiKey, baseUrl)
+        val departures = client.getDepartures(caltrainSouthboundPlatformId)
+
+        println("\n[Docker] Departures for Caltrain Southbound platform (ID: $caltrainSouthboundPlatformId):")
+        departures.forEach { d ->
+            println("  ${d.departureMinutes} min | Route ${d.routeShortName} → ${d.headsign}")
+        }
+
+        assertTrue(departures.isNotEmpty(), "Expected departures for the Caltrain Southbound platform")
+        assertTrue(departures.all { it.departureMinutes >= 0 }, "No past departures should be returned")
     }
 }
