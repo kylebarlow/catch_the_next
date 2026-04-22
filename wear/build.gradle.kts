@@ -59,4 +59,7 @@ dependencies {
     implementation("androidx.wear.compose:compose-navigation:1.4.0")
     implementation("com.google.android.horologist:horologist-compose-layout:0.6.14")
     implementation("com.google.android.horologist:horologist-compose-material:0.6.14")
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.wear.tiles:tiles:1.4.0")
+    implementation("androidx.wear.tiles:tiles-material:1.4.0")
 }
