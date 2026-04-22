@@ -18,7 +18,7 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = ScalingLazyColumnDefaults.padding()
+        contentPadding = ScalingLazyColumnDefaults.padding(first = ScalingLazyColumnDefaults.ItemType.Text, last = ScalingLazyColumnDefaults.ItemType.Text)()
     ) {
         items(favorites) { stop ->
             Chip(
