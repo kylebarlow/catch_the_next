@@ -41,9 +41,11 @@ if (localPropertiesFile.exists()) {
     properties.load(FileInputStream(localPropertiesFile))
 }
 val apiKey = properties.getProperty("APP_API_KEY") ?: "debug_key"
+val baseUrl = properties.getProperty("CATCH_THE_NEXT_BASE_URL") ?: "http://10.0.2.2:39217/api/v2/rest"
 
 android.defaultConfig {
     buildConfigField("String", "APP_API_KEY", "\"$apiKey\"")
+    buildConfigField("String", "CATCH_THE_NEXT_BASE_URL", "\"$baseUrl\"")
 }
 
 dependencies {
@@ -60,6 +62,11 @@ dependencies {
     implementation("com.google.android.horologist:horologist-compose-layout:0.6.14")
     implementation("com.google.android.horologist:horologist-compose-material:0.6.14")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("com.google.android.horologist:horologist-tiles:0.6.14")
+    implementation("com.google.android.horologist:horologist-compose-tools:0.6.14")
     implementation("androidx.wear.tiles:tiles:1.4.0")
     implementation("androidx.wear.tiles:tiles-material:1.4.0")
+    implementation("androidx.wear.protolayout:protolayout:1.2.0")
+    implementation("androidx.wear.protolayout:protolayout-material:1.2.0")
+    implementation("com.google.android.horologist:horologist-tiles:0.6.14")
 }
