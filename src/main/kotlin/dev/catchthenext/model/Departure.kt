@@ -1,7 +1,7 @@
 package dev.catchthenext.model
 
 data class Departure(
-    val stopId: Int,
+    val stopId: Long,
     val departureTime: String,
     val departureMinutes: Long,
     val routeShortName: String,

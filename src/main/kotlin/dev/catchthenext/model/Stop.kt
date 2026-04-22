@@ -1,7 +1,7 @@
 package dev.catchthenext.model
 
 data class Stop(
-    val id: Int,
+    val id: Long,
     val stopId: String,
     val stopName: String,
     val lat: Double,

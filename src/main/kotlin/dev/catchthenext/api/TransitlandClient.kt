@@ -35,10 +35,10 @@ class TransitlandClient(
 
         val body = executeGet(url.toString())
         val response = gson.fromJson(body, StopsResponse::class.java)
-        return response.stops.map { it.toStop() }
+        return response.stops.mapNotNull { it.toStop() }
     }
 
-    fun getDepartures(stopId: Int, nextSeconds: Int = 7200): List<Departure> {
+    fun getDepartures(stopId: Long, nextSeconds: Int = 7200): List<Departure> {
         val url = "$baseUrl/stops/$stopId/departures".toHttpUrl().newBuilder()
             .addQueryParameter("apikey", apiKey)
             .addQueryParameter("next", nextSeconds.toString())
@@ -47,7 +47,11 @@ class TransitlandClient(
 
         val body = executeGet(url.toString())
         val response = gson.fromJson(body, DeparturesResponse::class.java)
-        return response.departures.mapNotNull { it.toDeparture(stopId) }
+        // API wraps results in stops[]; departures live on the stop itself (leaf) or its children (parent station).
+        return response.stops
+            .flatMap { it.allDepartures() }
+            .mapNotNull { it.toDeparture(stopId) }
+            .sortedBy { it.departureMinutes }
     }
 
     private fun executeGet(url: String): String {
@@ -64,16 +68,26 @@ class TransitlandClient(
     private data class StopsResponse(val stops: List<StopJson> = emptyList())
 
     private data class StopJson(
-        val id: Int = 0,
-        @SerializedName("stop_id") val stopId: String = "",
-        @SerializedName("stop_name") val stopName: String = "",
+        val id: Long? = null,
+        @SerializedName("stop_id") val stopId: String? = null,
+        @SerializedName("stop_name") val stopName: String? = null,
         @SerializedName("onestop_id") val onestopId: String? = null,
         val geometry: GeometryJson? = null
     ) {
-        fun toStop(): Stop {
+        // Returns null for stops missing required fields (Gson can inject null despite non-null defaults).
+        fun toStop(): Stop? {
+            val resolvedId = id ?: return null
+            val resolvedName = stopName ?: return null
             val lon = geometry?.coordinates?.getOrNull(0) ?: 0.0
             val lat = geometry?.coordinates?.getOrNull(1) ?: 0.0
-            return Stop(id = id, stopId = stopId, stopName = stopName, lat = lat, lon = lon, onestopId = onestopId)
+            return Stop(
+                id = resolvedId,
+                stopId = stopId ?: "",
+                stopName = resolvedName,
+                lat = lat,
+                lon = lon,
+                onestopId = onestopId
+            )
         }
     }
 
@@ -82,7 +96,15 @@ class TransitlandClient(
         val coordinates: List<Double>? = null
     )
 
-    private data class DeparturesResponse(val departures: List<DepartureJson> = emptyList())
+    private data class DeparturesResponse(val stops: List<StopWithDeparturesJson> = emptyList())
+
+    private data class StopWithDeparturesJson(
+        val departures: List<DepartureJson>? = null,
+        val children: List<StopWithDeparturesJson>? = null
+    ) {
+        fun allDepartures(): List<DepartureJson> =
+            (departures ?: emptyList()) + (children ?: emptyList()).flatMap { it.allDepartures() }
+    }
 
     private data class DepartureJson(
         @SerializedName("departure_time") val departureTime: String? = null,
@@ -91,7 +113,7 @@ class TransitlandClient(
         val trip: TripJson? = null,
         val departure: StopTimeEventJson? = null
     ) {
-        fun toDeparture(stopId: Int): Departure? {
+        fun toDeparture(stopId: Long): Departure? {
             val deptTime = departureTime ?: return null
             val minutesFromNow = computeMinutesFromNow(deptTime, departure?.scheduledUtc)
             if (minutesFromNow < 0) return null

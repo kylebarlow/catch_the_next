@@ -38,12 +38,12 @@ class FavoritesManager(
         }
     }
 
-    fun removeFavorite(stopId: Int): Boolean {
+    fun removeFavorite(stopId: Long): Boolean {
         val current = getFavorites().toMutableList()
         val removed = current.removeAll { it.id == stopId }
         if (removed) saveFavorites(current)
         return removed
     }
 
-    fun isFavorite(stopId: Int): Boolean = getFavorites().any { it.id == stopId }
+    fun isFavorite(stopId: Long): Boolean = getFavorites().any { it.id == stopId }
 }
