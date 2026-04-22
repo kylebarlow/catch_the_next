@@ -1,11 +1,27 @@
 #!/bin/sh
-# Usage: NFSN_USER=myuser NFSN_HOST=mysite.nfshost.com ./push.sh
+# Deploy the proxy server to NearlyFreeSpeech.net.
+# Usage: ./deploy/push.sh
+# Requires SSH key already configured for the NFSN account.
+# Copy deploy/push.env.example to deploy/push.env and fill in credentials.
 set -e
 
-: "${NFSN_USER:?Set NFSN_USER}"
-: "${NFSN_HOST:?Set NFSN_HOST}"
-REMOTE_PATH="${NFSN_REMOTE_PATH:-/home/protected/server}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVER_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Load local credentials if present; otherwise require env vars.
+if [ -f "${SCRIPT_DIR}/push.env" ]; then
+  # shellcheck disable=SC1091
+  . "${SCRIPT_DIR}/push.env"
+fi
+
+: "${NFSN_USER:?Set NFSN_USER in deploy/push.env or the environment}"
+: "${NFSN_HOST:?Set NFSN_HOST in deploy/push.env or the environment}"
+
+REMOTE_SERVER="/home/protected/server"
+REMOTE_PYLIB="/home/protected/pylib"
+REMOTE_PUBLIC="/home/public"
+
+echo "==> Syncing server files to ${NFSN_HOST}:${REMOTE_SERVER}/"
 rsync -avz --delete \
   --exclude='.env' \
   --exclude='__pycache__' \
@@ -17,8 +33,20 @@ rsync -avz --delete \
   --exclude='docker-entrypoint.sh' \
   --exclude='apache/' \
   --exclude='deploy/' \
-  "$(dirname "$0")/../" \
-  "${NFSN_USER}@${NFSN_HOST}:${REMOTE_PATH}/"
+  "${SERVER_DIR}/" \
+  "${NFSN_USER}@${NFSN_HOST}:${REMOTE_SERVER}/"
 
-echo "Deployed to ${NFSN_HOST}:${REMOTE_PATH}"
-echo "Remember: pip install --user -r ${REMOTE_PATH}/requirements.txt if deps changed"
+echo "==> Uploading .env..."
+scp "${SERVER_DIR}/.env" "${NFSN_USER}@${NFSN_HOST}:${REMOTE_SERVER}/.env"
+
+echo "==> Deploying CGI entry point and .htaccess..."
+scp "${SCRIPT_DIR}/index.cgi" "${NFSN_USER}@${NFSN_HOST}:${REMOTE_PUBLIC}/index.cgi"
+ssh "${NFSN_USER}@${NFSN_HOST}" "chmod +x ${REMOTE_PUBLIC}/index.cgi"
+scp "${SCRIPT_DIR}/nfsn-htaccess" "${NFSN_USER}@${NFSN_HOST}:${REMOTE_PUBLIC}/.htaccess"
+
+echo "==> Installing Python dependencies..."
+ssh "${NFSN_USER}@${NFSN_HOST}" \
+  "pip3 install --upgrade --target ${REMOTE_PYLIB} -r ${REMOTE_SERVER}/requirements.txt"
+
+echo ""
+echo "Deployed. Test your site URL at /healthz"

@@ -2,6 +2,7 @@
 # Secrets
 .env
 server/.env
+server/deploy/push.env
 
 # Python
 server/__pycache__/
