@@ -8,9 +8,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.time.Duration
-import java.time.Instant
-import java.time.LocalTime
 import java.util.concurrent.TimeUnit
 
 class TransitlandClient(
@@ -45,9 +42,7 @@ class TransitlandClient(
 
         val body = executeGet(url.toString())
         val response = gson.fromJson(body, DeparturesResponse::class.java)
-        // API wraps results in stops[]; departures live on the stop itself (leaf) or its children (parent station).
-        return response.stops
-            .flatMap { it.allDepartures() }
+        return response.departures
             .mapNotNull { it.toDeparture(stopId) }
             .sortedBy { it.departureMinutes }
     }
@@ -94,83 +89,28 @@ class TransitlandClient(
         val coordinates: List<Double>? = null
     )
 
-    private data class DeparturesResponse(val stops: List<StopWithDeparturesJson> = emptyList())
+    // Proxy pre-computes departure_minutes and flattens the stop hierarchy.
+    private data class DeparturesResponse(val departures: List<ProxyDepartureJson> = emptyList())
 
-    private data class StopWithDeparturesJson(
-        val departures: List<DepartureJson>? = null,
-        val children: List<StopWithDeparturesJson>? = null
-    ) {
-        fun allDepartures(): List<DepartureJson> =
-            (departures ?: emptyList()) + (children ?: emptyList()).flatMap { it.allDepartures() }
-    }
-
-    private data class DepartureJson(
+    private data class ProxyDepartureJson(
+        @SerializedName("route_short_name") val routeShortName: String? = null,
+        val headsign: String? = null,
+        @SerializedName("departure_minutes") val departureMinutes: Long? = null,
         @SerializedName("departure_time") val departureTime: String? = null,
-        @SerializedName("stop_headsign") val stopHeadsign: String? = null,
-        @SerializedName("schedule_relationship") val scheduleRelationship: String? = null,
-        val trip: TripJson? = null,
-        val departure: StopTimeEventJson? = null
+        @SerializedName("schedule_relationship") val scheduleRelationship: String? = null
     ) {
         fun toDeparture(stopId: Long): Departure? {
-            val deptTime = departureTime ?: return null
-            val minutesFromNow = computeMinutesFromNow(deptTime, departure?.scheduledUtc)
-            if (minutesFromNow < 0) return null
-
-            val route = trip?.route
-            val headsign = stopHeadsign?.takeIf { it.isNotBlank() }
-                ?: trip?.tripHeadsign?.takeIf { it.isNotBlank() }
-                ?: ""
-
+            val minutes = departureMinutes ?: return null
+            if (minutes < 0) return null
             return Departure(
                 stopId = stopId,
-                departureTime = deptTime,
-                departureMinutes = minutesFromNow,
-                routeShortName = route?.routeShortName ?: "",
-                routeLongName = route?.routeLongName ?: "",
-                headsign = headsign,
+                departureTime = departureTime ?: "",
+                departureMinutes = minutes,
+                routeShortName = routeShortName ?: "",
+                routeLongName = "",
+                headsign = headsign ?: "",
                 scheduleRelationship = scheduleRelationship ?: "SCHEDULED"
             )
         }
-
-        private fun computeMinutesFromNow(departureTimeStr: String, scheduledUtc: String?): Long {
-            if (!scheduledUtc.isNullOrBlank()) {
-                return try {
-                    val instant = Instant.parse(scheduledUtc)
-                    Duration.between(Instant.now(), instant).toMinutes()
-                } catch (_: Exception) {
-                    parseGtfsTimeMinutes(departureTimeStr)
-                }
-            }
-            return parseGtfsTimeMinutes(departureTimeStr)
-        }
-
-        // GTFS departure_time can exceed 24:00:00 for post-midnight trips.
-        private fun parseGtfsTimeMinutes(timeStr: String): Long {
-            val parts = timeStr.split(":")
-            val h = parts.getOrNull(0)?.toIntOrNull() ?: return -1
-            val m = parts.getOrNull(1)?.toIntOrNull() ?: return -1
-            val depTotalMinutes = h * 60 + m
-            val now = LocalTime.now()
-            val nowMinutes = now.hour * 60 + now.minute
-            return (depTotalMinutes - nowMinutes).toLong()
-        }
     }
-
-    private data class TripJson(
-        @SerializedName("trip_headsign") val tripHeadsign: String? = null,
-        val route: RouteJson? = null
-    )
-
-    private data class RouteJson(
-        @SerializedName("route_short_name") val routeShortName: String? = null,
-        @SerializedName("route_long_name") val routeLongName: String? = null,
-        @SerializedName("route_type") val routeType: Int? = null
-    )
-
-    private data class StopTimeEventJson(
-        @SerializedName("scheduled_utc") val scheduledUtc: String? = null,
-        @SerializedName("scheduled_local") val scheduledLocal: String? = null,
-        @SerializedName("estimated_utc") val estimatedUtc: String? = null,
-        @SerializedName("estimated_local") val estimatedLocal: String? = null
-    )
 }
