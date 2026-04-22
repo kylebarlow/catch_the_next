@@ -15,10 +15,13 @@ server/   Python — lightweight Bottle/WSGI proxy that hides the Transitland AP
 
 ### Quick start
 
+Start the proxy server first (see Server section below), then:
+
 ```bash
 cd app
 cp .env.example .env
-# add your Transitland API key to .env
+# fill in APP_API_KEY (must match a key in the server's APP_API_KEYS)
+# set CATCH_THE_NEXT_BASE_URL if the proxy isn't on localhost:39217
 ./gradlew run --console=plain
 ```
 
@@ -27,15 +30,6 @@ The CLI walks through the full flow interactively:
 1. Enter a lat/lon and search radius to find nearby stops
 2. Select stops by number to save as favorites
 3. Print next departures for all favorites — shows minutes until departure, route short name, and headsign
-
-To route the CLI through the local wrapper server instead of Transitland directly:
-
-```bash
-cd app
-TRANSITLAND_API_KEY=your-app-key \
-CATCH_THE_NEXT_BASE_URL=http://localhost:39217/api/v2/rest \
-./gradlew run --console=plain
-```
 
 To build a standalone fat-jar:
 
@@ -129,7 +123,7 @@ See `deploy/nfsn-htaccess.sample` for the `.htaccess` config. Set `TRANSITLAND_A
 
 ## Design decisions
 
-**Proxy hides the Transitland key.** Android clients call the wrapper with an obfuscated app-level key (`X-API-Key`). The real Transitland key lives only on the server.
+**Proxy hides the Transitland key.** The Kotlin client calls the proxy with an app-level key (`X-API-Key` header, from `APP_API_KEY`). The real Transitland key lives only on the server.
 
 **Log-based rate limiting.** The rate limiter reads the Apache access log rather than maintaining a separate database. Stateless, zero extra dependencies, survives restarts — appropriate for a low-volume tile app.
 
@@ -143,7 +137,7 @@ See `deploy/nfsn-htaccess.sample` for the `.htaccess` config. Set `TRANSITLAND_A
 
 - [ ] Automated tests: hardcode stop IDs from CLI sessions and assert departure shapes against the live API
 - [ ] WearOS tile module: import core packages, wire up `TileService`, render `Stop` + `Departure` data
-- [ ] Android client: update `TransitlandClient` base URL to point at the wrapper; add `X-API-Key` header interceptor in OkHttp
+- [ ] Android client: configure `CATCH_THE_NEXT_BASE_URL` and `APP_API_KEY` for the production proxy URL
 - [ ] Favorite stop configuration activity: use the same `getNearbyStops` flow with a map/list UI
 - [ ] Realtime data: surface `CANCELED` trips in the tile
 - [ ] Refresh strategy: WorkManager vs tile's built-in `onTileRequest` freshness window

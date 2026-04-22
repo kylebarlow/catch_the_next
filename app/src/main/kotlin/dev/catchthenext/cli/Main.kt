@@ -9,7 +9,7 @@ import io.github.cdimascio.dotenv.DotenvException
 fun main() {
     val apiKey = loadApiKey()
     val baseUrl = System.getenv("CATCH_THE_NEXT_BASE_URL")
-        ?: "https://transit.land/api/v2/rest"
+        ?: "http://localhost:39217/api/v2/rest"
     val client = TransitlandClient(apiKey, baseUrl)
     val favorites = FavoritesManager()
 
@@ -152,14 +152,14 @@ private fun prompt(label: String): String {
 
 private fun loadApiKey(): String {
     // Try environment variable first, then .env file
-    val fromEnv = System.getenv("TRANSITLAND_API_KEY")
+    val fromEnv = System.getenv("APP_API_KEY")
     if (!fromEnv.isNullOrBlank()) return fromEnv
 
     return try {
         val dotenv = dotenv {
             ignoreIfMissing = true
         }
-        val key = dotenv["TRANSITLAND_API_KEY"]
+        val key = dotenv["APP_API_KEY"]
         if (key.isNullOrBlank()) exitMissingKey() else key
     } catch (_: DotenvException) {
         exitMissingKey()
@@ -168,9 +168,9 @@ private fun loadApiKey(): String {
 
 private fun exitMissingKey(): Nothing {
     System.err.println(
-        "\nError: TRANSITLAND_API_KEY not set.\n" +
+        "\nError: APP_API_KEY not set.\n" +
         "  Set it as an environment variable, or create a .env file:\n" +
-        "    TRANSITLAND_API_KEY=your_key_here\n"
+        "    APP_API_KEY=your_key_here\n"
     )
     System.exit(1)
     throw IllegalStateException("unreachable")

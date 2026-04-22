@@ -13,24 +13,27 @@ class TransitlandClientTest {
     private val testRadius = 500
 
     private fun apiKey(): String {
-        return System.getenv("TRANSITLAND_API_KEY")
+        return System.getenv("APP_API_KEY")
             ?: run {
                 val dotenvFile = java.io.File(".env")
                 if (dotenvFile.exists()) {
                     dotenvFile.readLines()
-                        .firstOrNull { it.startsWith("TRANSITLAND_API_KEY=") }
-                        ?.removePrefix("TRANSITLAND_API_KEY=")
+                        .firstOrNull { it.startsWith("APP_API_KEY=") }
+                        ?.removePrefix("APP_API_KEY=")
                         ?.trim()
                 } else null
             } ?: ""
     }
 
+    private fun baseUrl(): String =
+        System.getenv("CATCH_THE_NEXT_BASE_URL") ?: "http://localhost:39217/api/v2/rest"
+
     @Test
     fun `getNearbyStops returns stops for known location`() {
         val key = apiKey()
-        assumeTrue(key.isNotBlank(), "TRANSITLAND_API_KEY not set — skipping live API test")
+        assumeTrue(key.isNotBlank(), "APP_API_KEY not set — skipping live API test")
 
-        val client = TransitlandClient(key)
+        val client = TransitlandClient(key, baseUrl())
         val stops = client.getNearbyStops(testLat, testLon, testRadius)
 
         println("\nStops found near $testLat, $testLon (radius ${testRadius}m):")
@@ -46,11 +49,11 @@ class TransitlandClientTest {
     @Test
     fun `getDepartures returns departures for Caltrain 4th and King`() {
         val key = apiKey()
-        assumeTrue(key.isNotBlank(), "TRANSITLAND_API_KEY not set — skipping live API test")
+        assumeTrue(key.isNotBlank(), "APP_API_KEY not set — skipping live API test")
 
         // Parent station — departures live on child platform stops in the API response.
         val caltrainStopId = 2173133854L
-        val client = TransitlandClient(key)
+        val client = TransitlandClient(key, baseUrl())
         val departures = client.getDepartures(caltrainStopId)
 
         println("\nDepartures for Caltrain 4th & King (ID: $caltrainStopId):")

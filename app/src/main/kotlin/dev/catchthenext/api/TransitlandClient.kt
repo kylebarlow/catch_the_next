@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 
 class TransitlandClient(
     private val apiKey: String,
-    private val baseUrl: String = "https://transit.land/api/v2/rest"
+    private val baseUrl: String = "http://localhost:39217/api/v2/rest"
 ) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -30,7 +30,6 @@ class TransitlandClient(
             .addQueryParameter("lon", lon.toString())
             .addQueryParameter("radius", radiusMeters.toString())
             .addQueryParameter("limit", limit.toString())
-            .addQueryParameter("apikey", apiKey)
             .build()
 
         val body = executeGet(url.toString())
@@ -40,7 +39,6 @@ class TransitlandClient(
 
     fun getDepartures(stopId: Long, nextSeconds: Int = 7200): List<Departure> {
         val url = "$baseUrl/stops/$stopId/departures".toHttpUrl().newBuilder()
-            .addQueryParameter("apikey", apiKey)
             .addQueryParameter("next", nextSeconds.toString())
             .addQueryParameter("relative_date", "TODAY")
             .build()
@@ -55,7 +53,7 @@ class TransitlandClient(
     }
 
     private fun executeGet(url: String): String {
-        val request = Request.Builder().url(url).get().build()
+        val request = Request.Builder().url(url).addHeader("X-API-Key", apiKey).get().build()
         val response = http.newCall(request).execute()
         if (!response.isSuccessful) {
             throw IOException("API error ${response.code}: ${response.body?.string()?.take(200)}")
