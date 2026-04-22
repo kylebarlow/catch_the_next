@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Build output
+build/
+.gradle/
+out/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Favorites saved locally
+favorites.json
+~/.catch_the_next/
+
+# OS
+.DS_Store
+Thumbs.db
