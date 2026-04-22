@@ -5,7 +5,9 @@ Backend logic, CLI test harness, and API proxy server for a WearOS tile that sho
 ## Repo layout
 
 ```
-app/      Kotlin — shared core library + CLI test harness (future WearOS tile)
+core/     Kotlin — shared core library
+cli/      Kotlin — CLI test harness
+wear/     Android — Wear OS application + Tile
 server/   Python — lightweight Bottle/WSGI proxy that hides the Transitland API key
 ```
 
@@ -135,9 +137,11 @@ See `deploy/nfsn-htaccess.sample` for the `.htaccess` config. Set `TRANSITLAND_A
 
 ## Next steps
 
-- [ ] Automated tests: hardcode stop IDs from CLI sessions and assert departure shapes against the live API
-- [ ] WearOS tile module: import core packages, wire up `TileService`, render `Stop` + `Departure` data
-- [ ] Android client: configure `CATCH_THE_NEXT_BASE_URL` and `APP_API_KEY` for the production proxy URL
+## Next steps
+
+- [x] Automated tests: hardcode stop IDs from CLI sessions and assert departure shapes against the live API
+- [x] WearOS tile module: import core packages, wire up `TileService`, render `Stop` + `Departure` data (scaffolded)
+- [x] Android client: configure `CATCH_THE_NEXT_BASE_URL` and `APP_API_KEY` for the production proxy URL
 - [ ] Favorite stop configuration activity: use the same `getNearbyStops` flow with a map/list UI
 - [ ] Realtime data: surface `CANCELED` trips in the tile
 - [ ] Refresh strategy: WorkManager vs tile's built-in `onTileRequest` freshness window

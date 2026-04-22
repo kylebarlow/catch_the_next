@@ -2,6 +2,7 @@ package dev.catchthenext.cli
 
 import dev.catchthenext.api.TransitlandClient
 import dev.catchthenext.model.Stop
+import dev.catchthenext.storage.CliFavoritesManager
 import dev.catchthenext.storage.FavoritesManager
 import io.github.cdimascio.dotenv.dotenv
 import io.github.cdimascio.dotenv.DotenvException
@@ -11,7 +12,7 @@ fun main() {
     val baseUrl = System.getenv("CATCH_THE_NEXT_BASE_URL")
         ?: "http://localhost:39217/api/v2/rest"
     val client = TransitlandClient(apiKey, baseUrl)
-    val favorites = FavoritesManager()
+    val favorites = CliFavoritesManager()
 
     println("\n=== Catch The Next ===\n")
 
