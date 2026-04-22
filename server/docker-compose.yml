@@ -3,6 +3,6 @@ services:
     build: .
     env_file: .env
     ports:
-      - "8080:80"
+      - "39217:80"
     environment:
       ACCESS_LOG_PATH: /var/log/apache2/access.log
