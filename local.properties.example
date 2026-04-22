@@ -1,0 +1,5 @@
+# SDK Path (mandatory for headless/Android Studio builds)
+sdk.dir=/path/to/android-sdk
+
+# API Key for Transitland proxy
+APP_API_KEY=your_actual_api_key_here

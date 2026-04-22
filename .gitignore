@@ -21,6 +21,9 @@ out/
 *.ipr
 *.iws
 
+# Local configuration
+local.properties
+
 # Favorites saved locally
 favorites.json
 ~/.catch_the_next/
