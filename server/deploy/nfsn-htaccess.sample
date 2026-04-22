@@ -1,0 +1,13 @@
+# Place this as /home/public/.htaccess on your NFSN site.
+# Adjust the WSGIScriptAlias path to match your deployment location.
+#
+# Requires mod_wsgi enabled on the site (Python realm).
+# Set env vars (TRANSITLAND_API_KEY, APP_API_KEYS, etc.) via NFSN daemon config
+# or by creating /home/protected/server/.env and sourcing it in a wrapper script.
+
+WSGIScriptAlias / /home/protected/server/wsgi.py
+
+<Directory /home/protected/server>
+    WSGIApplicationGroup %{GLOBAL}
+    Require all granted
+</Directory>

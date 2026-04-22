@@ -1,5 +1,12 @@
 # Secrets
 .env
+server/.env
+
+# Python
+server/__pycache__/
+server/**/__pycache__/
+server/*.pyc
+server/.pytest_cache/
 
 # Build output
 build/

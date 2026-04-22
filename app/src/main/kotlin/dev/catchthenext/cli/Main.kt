@@ -8,7 +8,9 @@ import io.github.cdimascio.dotenv.DotenvException
 
 fun main() {
     val apiKey = loadApiKey()
-    val client = TransitlandClient(apiKey)
+    val baseUrl = System.getenv("CATCH_THE_NEXT_BASE_URL")
+        ?: "https://transit.land/api/v2/rest"
+    val client = TransitlandClient(apiKey, baseUrl)
     val favorites = FavoritesManager()
 
     println("\n=== Catch The Next ===\n")
