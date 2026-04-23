@@ -21,11 +21,14 @@ class LocationProvider(private val context: Context) : CurrentLocationProvider {
             context, Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasPerm) return@withContext null
+        val client = LocationServices.getFusedLocationProviderClient(context)
         runCatching {
+            // Use last known location — returns instantly from cache.
+            // Only fall back to getCurrentLocation on cold start (null last location).
+            val last = client.lastLocation.await()
+            if (last != null) return@runCatching LatLon(last.latitude, last.longitude)
             val cts = CancellationTokenSource()
-            val loc = LocationServices.getFusedLocationProviderClient(context)
-                .getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cts.token)
-                .await()
+            val loc = client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cts.token).await()
             loc?.let { LatLon(it.latitude, it.longitude) }
         }.getOrNull()
     }
