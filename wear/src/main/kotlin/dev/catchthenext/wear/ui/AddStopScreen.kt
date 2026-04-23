@@ -21,6 +21,7 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
+import dev.catchthenext.wear.WearGraph
 
 @Composable
 fun AddStopScreen(navController: NavController, viewModel: AddStopViewModel) {
@@ -63,8 +64,8 @@ fun AddStopScreen(navController: NavController, viewModel: AddStopViewModel) {
             items(state.stops) { stop ->
                 Chip(
                     onClick = {
-                        viewModel.addStop(stop)
-                        navController.popBackStack()
+                        WearGraph.pendingConfirmStop = stop
+                        navController.navigate("confirm")
                     },
                     label = { Text(stop.stopName) }
                 )

@@ -3,6 +3,7 @@ package dev.catchthenext.wear.tile
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import androidx.wear.protolayout.ColorBuilders
 import androidx.wear.protolayout.DeviceParametersBuilders.DeviceParameters
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.LayoutElementBuilders.LayoutElement
@@ -69,11 +70,13 @@ class ClosestStopTileService : SuspendingTileService() {
             }
         }
 
+        val white = ColorBuilders.argb(0xFFFFFFFF.toInt())
         val column = LayoutElementBuilders.Column.Builder()
         lines.forEach { line ->
             column.addContent(
                 Text.Builder(this, line)
                     .setTypography(Typography.TYPOGRAPHY_CAPTION1)
+                    .setColor(white)
                     .build()
             )
         }
@@ -90,6 +93,7 @@ class ClosestStopTileService : SuspendingTileService() {
     private fun Departure.compactText(): String {
         val time = if (departureMinutes <= 0L) "Now" else "${departureMinutes}m"
         val route = routeShortName.ifBlank { routeLongName.take(12) }
-        return "$time · $route"
+        val direction = if (headsign.isNotBlank()) " → ${headsign.take(15)}" else ""
+        return "$time · $route$direction"
     }
 }

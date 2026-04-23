@@ -7,7 +7,6 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -15,11 +14,14 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.location.LocationProvider
 import dev.catchthenext.wear.ui.AddStopScreen
 import dev.catchthenext.wear.ui.AddStopViewModel
 import dev.catchthenext.wear.ui.FavoritesScreen
 import dev.catchthenext.wear.ui.FavoritesViewModel
+import dev.catchthenext.wear.ui.StopConfirmScreen
+import dev.catchthenext.wear.ui.StopConfirmViewModel
 import dev.catchthenext.wear.ui.StopDetailsScreen
 import dev.catchthenext.wear.ui.StopDetailsViewModel
 
@@ -53,6 +55,16 @@ private fun WearNavGraph(navController: NavHostController, factory: WearViewMode
             val vm: StopDetailsViewModel = viewModel(factory = detailsFactory)
             StopDetailsScreen(navController = navController, viewModel = vm)
         }
+        composable("confirm") {
+            val stop = WearGraph.pendingConfirmStop
+            if (stop == null) {
+                navController.popBackStack()
+            } else {
+                val confirmFactory = StopConfirmViewModelFactory(navController.context, stop)
+                val vm: StopConfirmViewModel = viewModel(factory = confirmFactory)
+                StopConfirmScreen(navController = navController, viewModel = vm)
+            }
+        }
     }
 }
 
@@ -81,5 +93,18 @@ class StopDetailsViewModelFactory(
             getDepartures = { id -> WearGraph.transitlandClient().getDepartures(id) },
             favoritesManager = WearGraph.favoritesManager(context),
             stopId = stopId,
+        ) as T
+}
+
+class StopConfirmViewModelFactory(
+    private val context: Context,
+    private val stop: Stop,
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+        StopConfirmViewModel(
+            getDepartures = { id -> WearGraph.transitlandClient().getDepartures(id) },
+            favoritesManager = WearGraph.favoritesManager(context),
+            stop = stop,
         ) as T
 }
