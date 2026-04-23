@@ -73,6 +73,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("app.cash.turbine:turbine:1.2.0")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")

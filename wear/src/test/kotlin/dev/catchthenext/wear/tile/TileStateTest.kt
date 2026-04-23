@@ -1,6 +1,5 @@
 package dev.catchthenext.wear.tile
 
-import dev.catchthenext.model.Departure
 import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.location.LatLon
 import kotlinx.coroutines.test.runTest
@@ -15,8 +14,16 @@ class TileStateTest {
     private fun stop(id: Long, lat: Double, lon: Double) =
         Stop(id, "S$id", "Stop $id", lat, lon)
 
-    private fun departure(stopId: Long, minutes: Long) =
-        Departure(stopId, "12:00", minutes, "14", "Mission", "Ferry Plaza")
+    private fun cachedDep(minutesFromNow: Long) = CachedDeparture(
+        routeShortName = "14",
+        headsign = "Ferry Plaza",
+        scheduledEpochMillis = System.currentTimeMillis() + minutesFromNow * 60_000
+    )
+
+    private fun fetchReturning(vararg minutes: Long): suspend (Long) -> Pair<List<CachedDeparture>, Long> = {
+        val now = System.currentTimeMillis()
+        Pair(minutes.map { cachedDep(it) }, now)
+    }
 
     @Test
     fun `no permission returns NoPermission`() = runTest {
@@ -24,7 +31,7 @@ class TileStateTest {
             favorites = listOf(stop(1L, 37.77, -122.41)),
             location = sfLocation,
             hasPermission = false,
-            fetchDepartures = { emptyList() },
+            fetchDepartures = fetchReturning(),
         )
         assertEquals(TileState.NoPermission, state)
     }
@@ -35,7 +42,7 @@ class TileStateTest {
             favorites = emptyList(),
             location = sfLocation,
             hasPermission = true,
-            fetchDepartures = { emptyList() },
+            fetchDepartures = fetchReturning(),
         )
         assertEquals(TileState.NoFavorites, state)
     }
@@ -46,23 +53,22 @@ class TileStateTest {
             favorites = listOf(stop(1L, 37.77, -122.41)),
             location = null,
             hasPermission = true,
-            fetchDepartures = { emptyList() },
+            fetchDepartures = fetchReturning(),
         )
         assertEquals(TileState.NoLocation, state)
     }
 
     @Test
     fun `three favorites returns Ready with closest stop`() = runTest {
-        val near = stop(1L, 37.770, -122.410)  // same as location
-        val mid = stop(2L, 37.780, -122.410)   // ~1.1 km away
-        val far = stop(3L, 37.800, -122.410)   // ~3.3 km away
-        val deps = listOf(departure(1L, 5L), departure(1L, 12L))
+        val near = stop(1L, 37.770, -122.410)
+        val mid = stop(2L, 37.780, -122.410)
+        val far = stop(3L, 37.800, -122.410)
 
         val state = computeTileState(
             favorites = listOf(far, mid, near),
             location = sfLocation,
             hasPermission = true,
-            fetchDepartures = { deps },
+            fetchDepartures = fetchReturning(5L, 12L),
         )
 
         assertTrue(state is TileState.Ready, "Expected Ready but got $state")
@@ -89,8 +95,20 @@ class TileStateTest {
             favorites = emptyList(),
             location = null,
             hasPermission = false,
-            fetchDepartures = { emptyList() },
+            fetchDepartures = fetchReturning(),
         )
         assertEquals(TileState.NoPermission, state)
+    }
+
+    @Test
+    fun `past departures are filtered out`() = runTest {
+        val state = computeTileState(
+            favorites = listOf(stop(1L, 37.77, -122.41)),
+            location = sfLocation,
+            hasPermission = true,
+            fetchDepartures = fetchReturning(-5L, 3L, 10L), // -5 min = past, should be dropped
+        )
+        val ready = state as TileState.Ready
+        assertEquals(2, ready.departures.size)
     }
 }

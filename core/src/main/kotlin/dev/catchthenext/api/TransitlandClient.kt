@@ -21,7 +21,7 @@ class TransitlandClient(
 
     private val gson = Gson()
 
-    fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int = 500, limit: Int = 20): List<Stop> {
+    fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int = 600, limit: Int = 20): List<Stop> {
         val url = "$baseUrl/stops".toHttpUrl().newBuilder()
             .addQueryParameter("lat", lat.toString())
             .addQueryParameter("lon", lon.toString())

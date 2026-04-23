@@ -10,6 +10,7 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 fun interface CurrentLocationProvider {
     suspend fun currentLocation(): LatLon?
@@ -28,8 +29,14 @@ class LocationProvider(private val context: Context) : CurrentLocationProvider {
             val last = client.lastLocation.await()
             if (last != null) return@runCatching LatLon(last.latitude, last.longitude)
             val cts = CancellationTokenSource()
-            val loc = client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cts.token).await()
-            loc?.let { LatLon(it.latitude, it.longitude) }
+            try {
+                val loc = withTimeoutOrNull(8_000L) {
+                    client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cts.token).await()
+                }
+                loc?.let { LatLon(it.latitude, it.longitude) }
+            } finally {
+                cts.cancel()
+            }
         }.getOrNull()
     }
 }

@@ -16,8 +16,8 @@ import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.tiles.SuspendingTileService
-import dev.catchthenext.model.Departure
 import dev.catchthenext.wear.WearGraph
+import dev.catchthenext.wear.location.LatLon
 import dev.catchthenext.wear.location.LocationProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -27,17 +27,56 @@ class ClosestStopTileService : SuspendingTileService() {
 
     override suspend fun tileRequest(requestParams: RequestBuilders.TileRequest): TileBuilders.Tile {
         val deviceParams = requestParams.deviceConfiguration
+        DepartureWorker.schedule(this)
+
         val favoritesManager = WearGraph.favoritesManager(this)
         val client = WearGraph.transitlandClient()
         val locationProvider = LocationProvider(this)
+        val dataStore = TileDataStore(this)
 
         val state = withContext(Dispatchers.IO) {
-            val favorites = favoritesManager.getFavorites()
             val hasPerm = ContextCompat.checkSelfPermission(
                 this@ClosestStopTileService, Manifest.permission.ACCESS_COARSE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
-            val location = if (hasPerm) locationProvider.currentLocation() else null
-            computeTileState(favorites, location, hasPerm) { client.getDepartures(it) }
+
+            val favorites = favoritesManager.getFavorites()
+
+            val freshLocation = if (hasPerm) locationProvider.currentLocation() else null
+            if (freshLocation != null) dataStore.updateLocation(freshLocation.lat, freshLocation.lon)
+
+            val cache = dataStore.read()
+            val lat = freshLocation?.lat ?: cache.lat
+            val lon = freshLocation?.lon ?: cache.lon
+            val location = if (lat != null && lon != null) LatLon(lat, lon) else null
+
+            computeTileState(
+                favorites = favorites,
+                location = location,
+                hasPermission = hasPerm,
+                fetchDepartures = { stopId ->
+                    runCatching {
+                        val deps = client.getDepartures(stopId)
+                        val now = System.currentTimeMillis()
+                        val cached = deps.map { dep ->
+                            CachedDeparture(
+                                routeShortName = dep.routeShortName,
+                                headsign = dep.headsign,
+                                scheduledEpochMillis = now + dep.departureMinutes * 60_000
+                            )
+                        }
+                        val stop = favorites.first { it.id == stopId }
+                        dataStore.updateDepartures(stop, cached)
+                        Pair(cached, now)
+                    }.getOrElse {
+                        // Fall back to cache; if no cache for this stop, rethrow → NetworkError
+                        if (cache.closestStopId == stopId && cache.departures.isNotEmpty()) {
+                            Pair(cache.departures, cache.departuresFetchedAt ?: System.currentTimeMillis())
+                        } else {
+                            throw it
+                        }
+                    }
+                }
+            )
         }
 
         return TileBuilders.Tile.Builder()
@@ -66,7 +105,14 @@ class ClosestStopTileService : SuspendingTileService() {
             is TileState.NetworkError -> listOf("Network error")
             is TileState.Ready -> buildList {
                 add(state.stop.stopName)
-                state.departures.take(3).forEach { add(it.compactText()) }
+                state.departures.take(2).forEach { dep ->
+                    val mins = dep.currentMinutes()
+                    val time = if (mins <= 0L) "Now" else "${mins}m"
+                    val direction = if (dep.headsign.isNotBlank()) " → ${dep.headsign.take(12)}" else ""
+                    add("$time · ${dep.routeShortName}$direction")
+                }
+                val ageMinutes = (System.currentTimeMillis() - state.fetchedAt) / 60_000
+                add(if (ageMinutes < 1) "Live" else "${ageMinutes}m ago")
             }
         }
 
@@ -88,12 +134,5 @@ class ClosestStopTileService : SuspendingTileService() {
 
     override suspend fun resourcesRequest(requestParams: RequestBuilders.ResourcesRequest): ResourceBuilders.Resources {
         return ResourceBuilders.Resources.Builder().build()
-    }
-
-    private fun Departure.compactText(): String {
-        val time = if (departureMinutes <= 0L) "Now" else "${departureMinutes}m"
-        val route = routeShortName.ifBlank { routeLongName.take(12) }
-        val direction = if (headsign.isNotBlank()) " → ${headsign.take(15)}" else ""
-        return "$time · $route$direction"
     }
 }

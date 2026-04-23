@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,7 +53,10 @@ fun AddStopScreen(navController: NavController, viewModel: AddStopViewModel) {
     when (val state = ui) {
         is AddStopUi.PermissionNeeded -> CenteredText("Location permission required")
         is AddStopUi.Locating -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Text("Loading nearby stops…")
+            }
         }
         is AddStopUi.Loaded -> ScalingLazyColumn(
             modifier = Modifier.fillMaxSize(),

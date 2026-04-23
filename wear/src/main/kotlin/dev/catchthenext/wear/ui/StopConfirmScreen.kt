@@ -1,6 +1,7 @@
 package dev.catchthenext.wear.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -21,7 +22,10 @@ fun StopConfirmScreen(navController: NavController, viewModel: StopConfirmViewMo
 
     when (val state = ui) {
         is ConfirmUi.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Text("Loading departures…")
+            }
         }
         is ConfirmUi.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(state.msg)
