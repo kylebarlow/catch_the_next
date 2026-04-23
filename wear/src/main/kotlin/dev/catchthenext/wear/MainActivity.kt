@@ -71,8 +71,10 @@ private fun WearNavGraph(navController: NavHostController, factory: WearViewMode
 class WearViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T = when {
-        modelClass.isAssignableFrom(FavoritesViewModel::class.java) ->
-            FavoritesViewModel(WearGraph.favoritesManager(context)) as T
+        modelClass.isAssignableFrom(FavoritesViewModel::class.java) -> {
+            val mgr = WearGraph.favoritesManager(context)
+            FavoritesViewModel(favoritesFlow = mgr.favoritesFlow(), favoritesManager = mgr) as T
+        }
         modelClass.isAssignableFrom(AddStopViewModel::class.java) ->
             AddStopViewModel(
                 getNearbyStops = { lat, lon -> WearGraph.transitlandClient().getNearbyStops(lat, lon) },
