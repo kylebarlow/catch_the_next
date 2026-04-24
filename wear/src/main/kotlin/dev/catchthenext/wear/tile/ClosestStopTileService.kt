@@ -53,29 +53,9 @@ class ClosestStopTileService : SuspendingTileService() {
                 favorites = favorites,
                 location = location,
                 hasPermission = hasPerm,
-                fetchDepartures = { stopId ->
-                    runCatching {
-                        val deps = client.getDepartures(stopId)
-                        val now = System.currentTimeMillis()
-                        val cached = deps.map { dep ->
-                            CachedDeparture(
-                                routeShortName = dep.routeShortName,
-                                headsign = dep.headsign,
-                                scheduledEpochMillis = now + dep.departureMinutes * 60_000
-                            )
-                        }
-                        val stop = favorites.first { it.id == stopId }
-                        dataStore.updateDepartures(stop, cached)
-                        Pair(cached, now)
-                    }.getOrElse {
-                        // Fall back to cache; if no cache for this stop, rethrow → NetworkError
-                        if (cache.closestStopId == stopId && cache.departures.isNotEmpty()) {
-                            Pair(cache.departures, cache.departuresFetchedAt ?: System.currentTimeMillis())
-                        } else {
-                            throw it
-                        }
-                    }
-                }
+                dataStore = dataStore,
+                client = client,
+                cache = cache,
             )
         }
 

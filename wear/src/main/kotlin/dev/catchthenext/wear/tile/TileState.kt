@@ -1,5 +1,6 @@
 package dev.catchthenext.wear.tile
 
+import dev.catchthenext.api.TransitlandClient
 import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.location.LatLon
 import dev.catchthenext.wear.location.closestTo
@@ -24,20 +25,50 @@ sealed interface TileState {
     ) : TileState
 }
 
-// fetchDepartures returns (departures, fetchedAt epoch millis). Throw to signal NetworkError.
+suspend fun updateClosestStopDepartures(
+    lat: Double,
+    lon: Double,
+    favorites: List<Stop>,
+    dataStore: TileDataStore,
+    client: TransitlandClient,
+    cache: CachedTileData,
+): TileState {
+    val closest = favorites.closestTo(lat, lon) ?: return TileState.NoFavorites
+    return runCatching {
+        val deps = client.getDepartures(closest.id)
+        val now = System.currentTimeMillis()
+        val cached = deps.map { dep ->
+            CachedDeparture(
+                routeShortName = dep.routeShortName,
+                headsign = dep.headsign,
+                scheduledEpochMillis = now + dep.departureMinutes * 60_000
+            )
+        }
+        dataStore.updateDepartures(closest, cached)
+        TileState.Ready(closest, cached.filter { it.currentMinutes() >= 0 }, now)
+    }.getOrElse {
+        if (cache.closestStopId == closest.id && cache.departures.isNotEmpty()) {
+            TileState.Ready(
+                closest,
+                cache.departures.filter { it.currentMinutes() >= 0 },
+                cache.departuresFetchedAt ?: System.currentTimeMillis()
+            )
+        } else {
+            TileState.NetworkError(it.message ?: "Network error")
+        }
+    }
+}
+
 suspend fun computeTileState(
     favorites: List<Stop>,
     location: LatLon?,
     hasPermission: Boolean,
-    fetchDepartures: suspend (Long) -> Pair<List<CachedDeparture>, Long>,
+    dataStore: TileDataStore,
+    client: TransitlandClient,
+    cache: CachedTileData,
 ): TileState {
     if (!hasPermission) return TileState.NoPermission
     if (favorites.isEmpty()) return TileState.NoFavorites
     if (location == null) return TileState.NoLocation
-    val closest = favorites.closestTo(location.lat, location.lon)
-        ?: return TileState.NoFavorites
-    return runCatching {
-        val (deps, fetchedAt) = fetchDepartures(closest.id)
-        TileState.Ready(closest, deps.filter { it.currentMinutes() >= 0 }, fetchedAt)
-    }.getOrElse { TileState.NetworkError(it.message ?: "Network error") }
+    return updateClosestStopDepartures(location.lat, location.lon, favorites, dataStore, client, cache)
 }

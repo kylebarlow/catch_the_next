@@ -8,7 +8,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.catchthenext.wear.WearGraph
-import dev.catchthenext.wear.location.closestTo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -26,23 +25,20 @@ class DepartureWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
         val favorites = withContext(Dispatchers.IO) { favoritesManager.getFavorites() }
         if (favorites.isEmpty()) return Result.success()
 
-        val closest = favorites.closestTo(lat, lon) ?: return Result.success()
+        val client = WearGraph.transitlandClient()
+        val state = withContext(Dispatchers.IO) {
+            updateClosestStopDepartures(lat, lon, favorites, dataStore, client, cache)
+        }
 
-        return runCatching {
-            val client = WearGraph.transitlandClient()
-            val deps = withContext(Dispatchers.IO) { client.getDepartures(closest.id) }
-            val now = System.currentTimeMillis()
-            dataStore.updateDepartures(closest, deps.map { dep ->
-                CachedDeparture(
-                    routeShortName = dep.routeShortName,
-                    headsign = dep.headsign,
-                    scheduledEpochMillis = now + dep.departureMinutes * 60_000
-                )
-            })
-            TileService.getUpdater(applicationContext)
-                .requestUpdate(ClosestStopTileService::class.java)
-            Result.success()
-        }.getOrElse { Result.retry() }
+        return when (state) {
+            is TileState.Ready -> {
+                TileService.getUpdater(applicationContext)
+                    .requestUpdate(ClosestStopTileService::class.java)
+                Result.success()
+            }
+            is TileState.NetworkError -> Result.retry()
+            else -> Result.success()
+        }
     }
 
     companion object {
