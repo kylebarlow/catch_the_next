@@ -1,6 +1,7 @@
 package dev.catchthenext.wear.location
 
 import dev.catchthenext.model.Stop
+import dev.catchthenext.wear.storage.DistanceUnit
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.pow
@@ -21,3 +22,8 @@ fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Dou
 
 fun List<Stop>.closestTo(lat: Double, lon: Double): Stop? =
     minByOrNull { haversineMeters(lat, lon, it.lat, it.lon) }
+
+fun formatDistance(meters: Double, unit: DistanceUnit): String = when (unit) {
+    DistanceUnit.MILES -> "%.1f mi".format(meters / 1609.344)
+    DistanceUnit.KM -> "%.1f km".format(meters / 1000.0)
+}

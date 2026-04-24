@@ -16,6 +16,7 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.location.LocationProvider
+import dev.catchthenext.wear.storage.DistanceUnitStore
 import dev.catchthenext.wear.ui.AddStopScreen
 import dev.catchthenext.wear.ui.AddStopViewModel
 import dev.catchthenext.wear.ui.FavoritesScreen
@@ -73,7 +74,12 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T = when {
         modelClass.isAssignableFrom(FavoritesViewModel::class.java) -> {
             val mgr = WearGraph.favoritesManager(context)
-            FavoritesViewModel(favoritesFlow = mgr.favoritesFlow(), favoritesManager = mgr) as T
+            FavoritesViewModel(
+                favoritesFlow = mgr.favoritesFlow(),
+                favoritesManager = mgr,
+                locationProvider = LocationProvider(context),
+                distanceUnitStore = DistanceUnitStore(context),
+            ) as T
         }
         modelClass.isAssignableFrom(AddStopViewModel::class.java) ->
             AddStopViewModel(
