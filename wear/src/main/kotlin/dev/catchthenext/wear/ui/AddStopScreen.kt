@@ -55,7 +55,7 @@ fun AddStopScreen(navController: NavController, viewModel: AddStopViewModel) {
         is AddStopUi.Locating -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator()
-                Text("Loading nearby stops…")
+                Text("Getting GPS location…")
             }
         }
         is AddStopUi.Loaded -> ScalingLazyColumn(

@@ -31,7 +31,7 @@ class TransitlandClient(
 
         val body = executeGet(url.toString())
         val response = gson.fromJson(body, StopsResponse::class.java)
-        return response.stops.mapNotNull { it.toStop() }
+        return response.stops.mapNotNull { it.toStop(fallbackLat = lat, fallbackLon = lon) }
     }
 
     fun getDepartures(stopId: Long, nextSeconds: Int = 7200): List<Departure> {
@@ -68,11 +68,12 @@ class TransitlandClient(
         val geometry: GeometryJson? = null
     ) {
         // Returns null for stops missing required fields (Gson can inject null despite non-null defaults).
-        fun toStop(): Stop? {
+        fun toStop(fallbackLat: Double? = null, fallbackLon: Double? = null): Stop? {
             val resolvedId = id ?: return null
             val resolvedName = stopName ?: return null
-            val lon = geometry?.coordinates?.getOrNull(0) ?: 0.0
-            val lat = geometry?.coordinates?.getOrNull(1) ?: 0.0
+            val coords = geometry?.coordinates
+            val lon = coords?.getOrNull(0) ?: fallbackLon ?: return null
+            val lat = coords?.getOrNull(1) ?: fallbackLat ?: return null
             return Stop(
                 id = resolvedId,
                 stopId = stopId ?: "",

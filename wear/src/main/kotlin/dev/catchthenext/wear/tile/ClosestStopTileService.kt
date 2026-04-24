@@ -53,9 +53,7 @@ class ClosestStopTileService : SuspendingTileService() {
                 favorites = favorites,
                 location = location,
                 hasPermission = hasPerm,
-                dataStore = dataStore,
-                client = client,
-                cache = cache,
+                fetchDepartures = makeFetchDepartures(favorites, dataStore, client, cache),
             )
         }
 

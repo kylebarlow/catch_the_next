@@ -16,6 +16,7 @@ import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.location.LocationProvider
+import dev.catchthenext.wear.location.asHighAccuracy
 import dev.catchthenext.wear.storage.DistanceUnitStore
 import dev.catchthenext.wear.ui.AddStopScreen
 import dev.catchthenext.wear.ui.AddStopViewModel
@@ -74,18 +75,22 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T = when {
         modelClass.isAssignableFrom(FavoritesViewModel::class.java) -> {
             val mgr = WearGraph.favoritesManager(context)
+            val locationProvider = LocationProvider(context)
+            val store = DistanceUnitStore(context)
             FavoritesViewModel(
                 favoritesFlow = mgr.favoritesFlow(),
                 favoritesManager = mgr,
-                locationProvider = LocationProvider(context),
-                distanceUnitStore = DistanceUnitStore(context),
+                locationProvider = locationProvider,
+                highAccuracyLocate = locationProvider.asHighAccuracy(),
+                distanceUnitFlow = store.unitFlow,
+                persistUnit = { store.setUnit(it) },
             ) as T
         }
         modelClass.isAssignableFrom(AddStopViewModel::class.java) ->
             AddStopViewModel(
                 getNearbyStops = { lat, lon -> WearGraph.transitlandClient().getNearbyStops(lat, lon) },
                 favoritesManager = WearGraph.favoritesManager(context),
-                locationProvider = LocationProvider(context),
+                locationProvider = LocationProvider(context).asHighAccuracy(),
             ) as T
         else -> throw IllegalArgumentException("Unknown ViewModel: $modelClass")
     }

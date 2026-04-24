@@ -27,7 +27,7 @@ class DepartureWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
 
         val client = WearGraph.transitlandClient()
         val state = withContext(Dispatchers.IO) {
-            updateClosestStopDepartures(lat, lon, favorites, dataStore, client, cache)
+            updateClosestStopDepartures(lat, lon, favorites, makeFetchDepartures(favorites, dataStore, client, cache))
         }
 
         return when (state) {

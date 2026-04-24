@@ -7,7 +7,6 @@ import dev.catchthenext.storage.FavoritesManager
 import dev.catchthenext.wear.location.CurrentLocationProvider
 import dev.catchthenext.wear.location.LatLon
 import dev.catchthenext.wear.storage.DistanceUnit
-import dev.catchthenext.wear.storage.DistanceUnitStore
 import dev.catchthenext.wear.storage.localeDefaultUnit
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +22,9 @@ class FavoritesViewModel(
     favoritesFlow: Flow<List<Stop>>,
     private val favoritesManager: FavoritesManager,
     private val locationProvider: CurrentLocationProvider,
-    private val distanceUnitStore: DistanceUnitStore,
+    private val highAccuracyLocate: CurrentLocationProvider = locationProvider,
+    distanceUnitFlow: Flow<DistanceUnit>,
+    private val persistUnit: suspend (DistanceUnit) -> Unit,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
@@ -33,13 +34,18 @@ class FavoritesViewModel(
     private val _location = MutableStateFlow<LatLon?>(null)
     val location: StateFlow<LatLon?> = _location.asStateFlow()
 
-    val distanceUnit: StateFlow<DistanceUnit> = distanceUnitStore.unitFlow
+    // Location age tracking — easy to remove if not needed in prod
+    private val _locationFetchedAt = MutableStateFlow<Long?>(null)
+    val locationFetchedAt: StateFlow<Long?> = _locationFetchedAt.asStateFlow()
+
+    private val _locationRefreshing = MutableStateFlow(false)
+    val locationRefreshing: StateFlow<Boolean> = _locationRefreshing.asStateFlow()
+
+    val distanceUnit: StateFlow<DistanceUnit> = distanceUnitFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), localeDefaultUnit())
 
     init {
-        viewModelScope.launch(ioDispatcher) {
-            _location.value = locationProvider.currentLocation()
-        }
+        fetchLocation(locationProvider)
     }
 
     fun removeFavorite(stopId: Long) {
@@ -51,7 +57,23 @@ class FavoritesViewModel(
     fun toggleUnit() {
         viewModelScope.launch(ioDispatcher) {
             val next = if (distanceUnit.value == DistanceUnit.MILES) DistanceUnit.KM else DistanceUnit.MILES
-            distanceUnitStore.setUnit(next)
+            persistUnit(next)
+        }
+    }
+
+    /** Forces a HIGH-accuracy GPS fix and updates location + age display. */
+    fun refreshLocation() {
+        if (_locationRefreshing.value) return
+        fetchLocation(highAccuracyLocate, refreshing = true)
+    }
+
+    private fun fetchLocation(provider: CurrentLocationProvider, refreshing: Boolean = false) {
+        viewModelScope.launch(ioDispatcher) {
+            if (refreshing) _locationRefreshing.value = true
+            val loc = provider.currentLocation()
+            _location.value = loc
+            _locationFetchedAt.value = if (loc != null) System.currentTimeMillis() else null
+            if (refreshing) _locationRefreshing.value = false
         }
     }
 }
