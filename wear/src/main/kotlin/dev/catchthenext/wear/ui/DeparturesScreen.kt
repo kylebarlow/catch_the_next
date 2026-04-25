@@ -25,10 +25,11 @@ import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
-import dev.catchthenext.wear.tile.CachedDeparture
+import dev.catchthenext.wear.tile.GroupedDeparture
 import dev.catchthenext.wear.tile.TileColors
 import dev.catchthenext.wear.tile.TileState
 import dev.catchthenext.wear.tile.freshnessLabel
+import dev.catchthenext.wear.tile.groupDepartures
 import dev.catchthenext.wear.tile.timeLabel
 
 @Composable
@@ -76,15 +77,10 @@ private fun DeparturesReadyContent(
     navController: NavController,
     viewModel: DeparturesViewModel,
 ) {
-    val rows = state.stops.flatMap { swd ->
-        swd.departures
-            .filter { it.currentMinutes() in 0..59 }
-            .take(10)
-            .map { Triple(it, swd.stop.stopName, state.stops.size > 1) }
-    }.sortedBy { (dep, _, _) -> dep.currentMinutes() }
-
-    val headerText = if (state.stops.size == 1) state.stops[0].stop.stopName
-                     else "${state.stops.size} nearby stops"
+    val groups = groupDepartures(
+        stops = state.stops,
+        filter = { it.currentMinutes() in 0..59 },
+    )
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -93,16 +89,17 @@ private fun DeparturesReadyContent(
             last = ScalingLazyColumnDefaults.ItemType.Chip,
         )()
     ) {
-        item { Text(headerText) }
-        item { Text(freshnessLabel(state.fetchedAt), color = Color(TileColors.textDim)) }
+        if (state.stops.size == 1) {
+            item { Text(state.stops[0].stop.stopName) }
+        }
 
-        if (rows.isEmpty()) {
+        if (groups.isEmpty()) {
             item { Text("No departures in the next hour") }
         } else {
-            items(rows) { (dep, stopName, showStopTag) ->
-                DepartureRow(dep, stopName, showStopTag)
-            }
+            items(groups) { group -> GroupedDepartureRow(group) }
         }
+
+        item { Text(freshnessLabel(state.fetchedAt), color = Color(TileColors.textDim)) }
 
         item {
             Chip(
@@ -129,11 +126,12 @@ private fun DeparturesReadyContent(
 }
 
 @Composable
-private fun DepartureRow(dep: CachedDeparture, stopName: String, showStopTag: Boolean) {
+private fun GroupedDepartureRow(group: GroupedDeparture) {
+    val timesText = group.minutesList.joinToString(" ") { timeLabel(it) }
     val routeLabel = buildString {
-        append(dep.routeShortName)
-        if (dep.headsign.isNotBlank()) append(" → ${dep.headsign}")
-        if (showStopTag) append(" · $stopName")
+        append(group.routeShortName)
+        if (group.headsign.isNotBlank()) append(" → ${group.headsign}")
+        if (group.showStopTag) append(" · ${group.stopName}")
     }
     Row(
         modifier = Modifier
@@ -142,7 +140,7 @@ private fun DepartureRow(dep: CachedDeparture, stopName: String, showStopTag: Bo
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = timeLabel(dep.currentMinutes()),
+            text = timesText,
             color = Color(TileColors.accent),
             style = MaterialTheme.typography.title3,
         )

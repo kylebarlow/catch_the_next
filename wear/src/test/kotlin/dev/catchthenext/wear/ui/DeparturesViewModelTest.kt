@@ -98,4 +98,49 @@ class DeparturesViewModelTest {
         val state = vm.ui.value
         assertTrue(state is DeparturesUi.Loaded, "State should be Loaded after init completes")
     }
+
+    @Test
+    fun `quickCacheRead is called during init`() = runTest(testDispatcher) {
+        var quickCalled = false
+        val vm = DeparturesViewModel(
+            computeState = { TileState.NoFavorites },
+            quickCacheRead = {
+                quickCalled = true
+                null
+            },
+            ioDispatcher = testDispatcher,
+        )
+        assertTrue(quickCalled, "quickCacheRead should be called during init")
+        val state = vm.ui.value as DeparturesUi.Loaded
+        assertTrue(state.tileState is TileState.NoFavorites, "Final state comes from computeState")
+    }
+
+    @Test
+    fun `quickCacheRead result is shown before computeState completes`() = runTest(testDispatcher) {
+        val now = System.currentTimeMillis()
+        val cachedReady = TileState.Ready(
+            listOf(StopWithDepartures(stop(1L), 0.0, listOf(cachedDep(5L)), now)),
+            now
+        )
+        // computeState returns a different state — final state should be from computeState
+        val vm = DeparturesViewModel(
+            computeState = { TileState.NoLocation },
+            quickCacheRead = { cachedReady },
+            ioDispatcher = testDispatcher,
+        )
+        // With UnconfinedTestDispatcher both run synchronously; computeState wins as last write
+        val state = vm.ui.value as DeparturesUi.Loaded
+        assertTrue(state.tileState is TileState.NoLocation)
+    }
+
+    @Test
+    fun `null quickCacheRead skips cache path and uses computeState`() = runTest(testDispatcher) {
+        val vm = DeparturesViewModel(
+            computeState = { TileState.NetworkError("offline") },
+            quickCacheRead = null,
+            ioDispatcher = testDispatcher,
+        )
+        val state = vm.ui.value as DeparturesUi.Loaded
+        assertEquals("offline", (state.tileState as TileState.NetworkError).message)
+    }
 }

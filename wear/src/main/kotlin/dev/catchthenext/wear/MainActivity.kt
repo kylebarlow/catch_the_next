@@ -23,7 +23,9 @@ import dev.catchthenext.wear.location.LocationProvider
 import dev.catchthenext.wear.location.asHighAccuracy
 import dev.catchthenext.wear.storage.AttributionStore
 import dev.catchthenext.wear.storage.DistanceUnitStore
+import dev.catchthenext.wear.tile.StopWithDepartures
 import dev.catchthenext.wear.tile.TileDataStore
+import dev.catchthenext.wear.tile.TileState
 import dev.catchthenext.wear.tile.computeTileState
 import dev.catchthenext.wear.tile.makeFetchNetworkDepartures
 import dev.catchthenext.wear.ui.AboutScreen
@@ -112,6 +114,35 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
             val favoritesManager = WearGraph.favoritesManager(context)
             val distanceStore = DistanceUnitStore(context)
             DeparturesViewModel(
+                quickCacheRead = {
+                    val now = System.currentTimeMillis()
+                    val hasPerm = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.ACCESS_COARSE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (!hasPerm) {
+                        TileState.NoPermission
+                    } else {
+                        val favorites = favoritesManager.getFavorites()
+                        if (favorites.isEmpty()) {
+                            TileState.NoFavorites
+                        } else {
+                            val cache = dataStore.read()
+                            val freshStops = cache.nearbyDepartures.filter { now - it.fetchedAt < 60_000L }
+                            val stops = freshStops.mapNotNull { cached ->
+                                val stop = favorites.firstOrNull { it.id == cached.stopId }
+                                if (stop == null) null
+                                else StopWithDepartures(
+                                    stop = stop,
+                                    distanceMeters = 0.0,
+                                    departures = cached.departures.filter { it.currentMinutes() >= 0 },
+                                    fetchedAt = cached.fetchedAt,
+                                )
+                            }
+                            if (stops.isEmpty()) null
+                            else TileState.Ready(stops, stops.minOf { it.fetchedAt })
+                        }
+                    }
+                },
                 computeState = { forceFresh ->
                     val favorites = favoritesManager.getFavorites()
                     val hasPerm = ContextCompat.checkSelfPermission(

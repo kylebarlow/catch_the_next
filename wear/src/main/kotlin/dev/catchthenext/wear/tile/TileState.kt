@@ -10,7 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
-private const val CACHE_TTL_MS = 60_000L
+internal const val CACHE_TTL_MS = 60_000L
 
 data class CachedDeparture(
     val routeShortName: String,
@@ -93,6 +93,36 @@ suspend fun updateNearbyStopsDepartures(
         persistDepartures(successful)
         TileState.Ready(successful, successful.minOf { it.fetchedAt })
     }
+}
+
+data class GroupedDeparture(
+    val routeShortName: String,
+    val headsign: String,
+    val stopName: String,
+    val showStopTag: Boolean,
+    val minutesList: List<Long>,
+)
+
+fun groupDepartures(
+    stops: List<StopWithDepartures>,
+    maxPerGroup: Int = 3,
+    filter: (CachedDeparture) -> Boolean = { it.currentMinutes() >= 0 },
+): List<GroupedDeparture> {
+    val showStopTag = stops.size > 1
+    return stops.flatMap { swd ->
+        swd.departures
+            .filter(filter)
+            .groupBy { it.routeShortName to it.headsign }
+            .map { (key, deps) ->
+                GroupedDeparture(
+                    routeShortName = key.first,
+                    headsign = key.second,
+                    stopName = swd.stop.stopName,
+                    showStopTag = showStopTag,
+                    minutesList = deps.map { it.currentMinutes() }.sorted().take(maxPerGroup),
+                )
+            }
+    }.sortedBy { it.minutesList.firstOrNull() ?: Long.MAX_VALUE }
 }
 
 suspend fun computeTileState(

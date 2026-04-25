@@ -173,6 +173,89 @@ class TileStateTest {
         assertEquals(1L, ready.stops[0].stop.id)
     }
 
+    // --- groupDepartures tests ---
+
+    private fun swd(stop: Stop, vararg deps: CachedDeparture) =
+        StopWithDepartures(stop, 0.0, deps.toList())
+
+    @Test
+    fun `groupDepartures groups same route into one entry`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000),
+            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000),
+        )))
+        assertEquals(1, groups.size)
+        assertEquals(listOf(5L, 15L), groups[0].minutesList)
+    }
+
+    @Test
+    fun `groupDepartures caps minutesList at maxPerGroup`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000),
+            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000),
+            CachedDeparture("14", "Ferry Plaza", now + 25 * 60_000),
+            CachedDeparture("14", "Ferry Plaza", now + 35 * 60_000),
+        )), maxPerGroup = 3)
+        assertEquals(1, groups.size)
+        assertEquals(3, groups[0].minutesList.size)
+        assertEquals(listOf(5L, 15L, 25L), groups[0].minutesList)
+    }
+
+    @Test
+    fun `groupDepartures separates different routes`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000),
+            CachedDeparture("49", "Caltrain", now + 10 * 60_000),
+        )))
+        assertEquals(2, groups.size)
+        assertEquals("14", groups[0].routeShortName)
+        assertEquals("49", groups[1].routeShortName)
+    }
+
+    @Test
+    fun `groupDepartures sorts groups by first departure time`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            CachedDeparture("49", "Caltrain", now + 10 * 60_000),
+            CachedDeparture("14", "Ferry Plaza", now + 3 * 60_000),
+        )))
+        assertEquals("14", groups[0].routeShortName, "Route 14 departs sooner, should be first")
+    }
+
+    @Test
+    fun `groupDepartures sets showStopTag true for multiple stops`() {
+        val now = System.currentTimeMillis()
+        val s1 = stop(1L, 37.770, -122.410)
+        val s2 = stop(2L, 37.771, -122.410)
+        val groups = groupDepartures(listOf(
+            swd(s1, CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000)),
+            swd(s2, CachedDeparture("22", "Mission", now + 8 * 60_000)),
+        ))
+        assertTrue(groups.all { it.showStopTag })
+    }
+
+    @Test
+    fun `groupDepartures respects custom filter`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(
+            stops = listOf(swd(s,
+                CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000),
+                CachedDeparture("14", "Ferry Plaza", now + 70 * 60_000),  // > 59 min
+            )),
+            filter = { it.currentMinutes() in 0..59 },
+        )
+        assertEquals(1, groups.size)
+        assertEquals(1, groups[0].minutesList.size, "Departure beyond 59 min should be filtered out")
+    }
+
     // --- cache tests ---
 
     private fun cachedStopDeps(stopId: Long, fetchedAt: Long, vararg minutes: Long) =

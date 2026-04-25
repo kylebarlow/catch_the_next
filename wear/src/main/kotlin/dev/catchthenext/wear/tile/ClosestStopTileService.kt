@@ -145,17 +145,12 @@ class ClosestStopTileService : SuspendingTileService() {
     }
 
     private fun readyLayout(state: TileState.Ready, deviceParams: DeviceParameters): LayoutElement {
-        // Merge departures from all stops, sorted by minutes-until-departure
-        val rows = state.stops.flatMap { swd ->
-            swd.departures
-                .filter { it.currentMinutes() >= 0 }
-                .map { Triple(it, swd.stop, state.stops.size > 1) }
-        }.sortedBy { (dep, _, _) -> dep.currentMinutes() }.take(MAX_TILE_ROWS)
+        val groups = groupDepartures(state.stops).take(MAX_TILE_ROWS)
 
         val col = LayoutElementBuilders.Column.Builder()
             .setWidth(DimensionBuilders.expand())
 
-        rows.forEachIndexed { i, (dep, stop, showStopTag) ->
+        groups.forEachIndexed { i, group ->
             if (i > 0) {
                 col.addContent(
                     LayoutElementBuilders.Spacer.Builder()
@@ -164,22 +159,19 @@ class ClosestStopTileService : SuspendingTileService() {
                         .build()
                 )
             }
-            col.addContent(departureRow(dep, stop.stopName, showStopTag))
+            col.addContent(groupedDepartureRow(group))
         }
 
-        val primaryLabel = if (state.stops.size == 1) {
-            state.stops[0].stop.stopName.take(22)
-        } else {
-            "${state.stops.size} nearby stops"
-        }
-
-        return PrimaryLayout.Builder(deviceParams)
-            .setPrimaryLabelTextContent(
-                Text.Builder(this, primaryLabel)
+        val builder = PrimaryLayout.Builder(deviceParams)
+        if (state.stops.size == 1) {
+            builder.setPrimaryLabelTextContent(
+                Text.Builder(this, state.stops[0].stop.stopName.take(22))
                     .setTypography(Typography.TYPOGRAPHY_CAPTION1)
                     .setColor(ColorBuilders.argb(TileColors.textDim))
                     .build()
             )
+        }
+        return builder
             .setContent(col.build())
             .setSecondaryLabelTextContent(
                 Text.Builder(this, freshnessLabel(state.fetchedAt))
@@ -190,19 +182,19 @@ class ClosestStopTileService : SuspendingTileService() {
             .build()
     }
 
-    private fun departureRow(dep: CachedDeparture, stopName: String, showStopTag: Boolean): LayoutElement {
-        val mins = dep.currentMinutes()
-        val stopTag = if (showStopTag) " · ${stopName.take(6)}" else ""
+    private fun groupedDepartureRow(group: GroupedDeparture): LayoutElement {
+        val timesLabel = group.minutesList.joinToString(" ") { timeLabel(it) }
+        val stopTag = if (group.showStopTag) " · ${group.stopName.take(6)}" else ""
         val routeLabel = buildString {
-            append(dep.routeShortName)
-            if (dep.headsign.isNotBlank()) append(" → ${dep.headsign.take(12)}")
+            append(group.routeShortName)
+            if (group.headsign.isNotBlank()) append(" → ${group.headsign.take(12)}")
             append(stopTag)
         }
 
         return LayoutElementBuilders.Row.Builder()
             .setWidth(DimensionBuilders.expand())
             .addContent(
-                Text.Builder(this, timeLabel(mins))
+                Text.Builder(this, timesLabel)
                     .setTypography(Typography.TYPOGRAPHY_TITLE3)
                     .setColor(ColorBuilders.argb(TileColors.accent))
                     .build()
