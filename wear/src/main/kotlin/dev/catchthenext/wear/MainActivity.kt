@@ -1,10 +1,13 @@
 package dev.catchthenext.wear
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
@@ -15,14 +18,20 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import dev.catchthenext.model.Stop
+import dev.catchthenext.wear.location.LatLon
 import dev.catchthenext.wear.location.LocationProvider
 import dev.catchthenext.wear.location.asHighAccuracy
 import dev.catchthenext.wear.storage.AttributionStore
 import dev.catchthenext.wear.storage.DistanceUnitStore
+import dev.catchthenext.wear.tile.TileDataStore
+import dev.catchthenext.wear.tile.computeTileState
+import dev.catchthenext.wear.tile.makeFetchNetworkDepartures
 import dev.catchthenext.wear.ui.AboutScreen
 import dev.catchthenext.wear.ui.AboutViewModel
 import dev.catchthenext.wear.ui.AddStopScreen
 import dev.catchthenext.wear.ui.AddStopViewModel
+import dev.catchthenext.wear.ui.DeparturesScreen
+import dev.catchthenext.wear.ui.DeparturesViewModel
 import dev.catchthenext.wear.ui.FavoritesScreen
 import dev.catchthenext.wear.ui.FavoritesViewModel
 import dev.catchthenext.wear.ui.SettingsScreen
@@ -32,6 +41,7 @@ import dev.catchthenext.wear.ui.StopConfirmScreen
 import dev.catchthenext.wear.ui.StopConfirmViewModel
 import dev.catchthenext.wear.ui.StopDetailsScreen
 import dev.catchthenext.wear.ui.StopDetailsViewModel
+import kotlinx.coroutines.flow.first
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,7 +58,11 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun WearNavGraph(navController: NavHostController, factory: WearViewModelFactory) {
-    SwipeDismissableNavHost(navController = navController, startDestination = "favorites") {
+    SwipeDismissableNavHost(navController = navController, startDestination = "departures") {
+        composable("departures") {
+            val vm: DeparturesViewModel = viewModel(factory = factory)
+            DeparturesScreen(navController = navController, viewModel = vm)
+        }
         composable("favorites") {
             val vm: FavoritesViewModel = viewModel(factory = factory)
             FavoritesScreen(navController = navController, viewModel = vm)
@@ -91,6 +105,40 @@ private fun WearNavGraph(navController: NavHostController, factory: WearViewMode
 class WearViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T = when {
+        modelClass.isAssignableFrom(DeparturesViewModel::class.java) -> {
+            val client = WearGraph.transitlandClient()
+            val dataStore = TileDataStore(context)
+            val locationProvider = LocationProvider(context)
+            val favoritesManager = WearGraph.favoritesManager(context)
+            val distanceStore = DistanceUnitStore(context)
+            DeparturesViewModel(
+                computeState = { forceFresh ->
+                    val favorites = favoritesManager.getFavorites()
+                    val hasPerm = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.ACCESS_COARSE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+                    val freshLocation = if (hasPerm) locationProvider.currentLocation() else null
+                    val cache = dataStore.read()
+                    if (freshLocation != null) dataStore.updateLocation(freshLocation.lat, freshLocation.lon)
+                    val lat = freshLocation?.lat ?: cache.lat
+                    val lon = freshLocation?.lon ?: cache.lon
+                    val location = if (lat != null && lon != null) LatLon(lat, lon) else null
+                    val threshold = distanceStore.thresholdMetersFlow.first()
+                    computeTileState(
+                        favorites = favorites,
+                        location = location,
+                        hasPermission = hasPerm,
+                        thresholdMeters = threshold,
+                        fetchDepartures = makeFetchNetworkDepartures(
+                            getDepartures = { id -> client.getDepartures(id) },
+                            cache = cache,
+                            forceFresh = forceFresh,
+                        ),
+                        persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
+                    )
+                }
+            ) as T
+        }
         modelClass.isAssignableFrom(FavoritesViewModel::class.java) -> {
             val mgr = WearGraph.favoritesManager(context)
             val locationProvider = LocationProvider(context)

@@ -37,7 +37,7 @@ class DepartureWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
                 location = LatLon(lat, lon),
                 hasPermission = true,
                 thresholdMeters = threshold,
-                fetchDepartures = makeFetchNetworkDepartures(client, cache),
+                fetchDepartures = makeFetchNetworkDepartures({ client.getDepartures(it) }, cache),
                 persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
             )
         }

@@ -1,6 +1,6 @@
 package dev.catchthenext.wear.tile
 
-import dev.catchthenext.api.TransitlandClient
+import dev.catchthenext.model.Departure
 import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.location.LatLon
 import dev.catchthenext.wear.location.closestTo
@@ -9,6 +9,8 @@ import dev.catchthenext.wear.location.withinMeters
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+
+private const val CACHE_TTL_MS = 60_000L
 
 data class CachedDeparture(
     val routeShortName: String,
@@ -21,7 +23,8 @@ data class CachedDeparture(
 data class StopWithDepartures(
     val stop: Stop,
     val distanceMeters: Double,
-    val departures: List<CachedDeparture>
+    val departures: List<CachedDeparture>,
+    val fetchedAt: Long = System.currentTimeMillis(),
 )
 
 sealed interface TileState {
@@ -59,19 +62,19 @@ suspend fun updateNearbyStopsDepartures(
         listOf(Pair(closest, haversineMeters(lat, lon, closest.lat, closest.lon)))
     }
 
-    val fetchedAt = System.currentTimeMillis()
     // Pair<StopWithDepartures?, Throwable?> to preserve error messages on total failure
     val allResults: List<Pair<StopWithDepartures?, Throwable?>> = coroutineScope {
         selected.map { (stop, distanceMeters) ->
             async {
                 runCatching { fetchDepartures(stop.id) }
                     .fold(
-                        onSuccess = { (deps, _) ->
+                        onSuccess = { (deps, stopFetchedAt) ->
                             Pair(
                                 StopWithDepartures(
                                     stop = stop,
                                     distanceMeters = distanceMeters,
-                                    departures = deps.filter { it.currentMinutes() >= 0 }
+                                    departures = deps.filter { it.currentMinutes() >= 0 },
+                                    fetchedAt = stopFetchedAt,
                                 ),
                                 null
                             )
@@ -88,7 +91,7 @@ suspend fun updateNearbyStopsDepartures(
         TileState.NetworkError(errMsg)
     } else {
         persistDepartures(successful)
-        TileState.Ready(successful, fetchedAt)
+        TileState.Ready(successful, successful.minOf { it.fetchedAt })
     }
 }
 
@@ -108,21 +111,27 @@ suspend fun computeTileState(
     )
 }
 
-/** Network fetch + cache fallback for a single stop. Does not persist (caller persists the full set). */
+/** Network fetch + per-stop 60 s cache check + error fallback for a single stop. */
 fun makeFetchNetworkDepartures(
-    client: TransitlandClient,
+    getDepartures: suspend (Long) -> List<Departure>,
     cache: CachedTileData,
+    forceFresh: Boolean = false,
 ): suspend (Long) -> Pair<List<CachedDeparture>, Long> = { stopId ->
-    runCatching {
-        val deps = client.getDepartures(stopId)
-        val now = System.currentTimeMillis()
-        Pair(deps.map { dep ->
-            CachedDeparture(dep.routeShortName, dep.headsign, now + dep.departureMinutes * 60_000)
-        }, now)
-    }.getOrElse { e ->
-        val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
-        if (cached != null && cached.departures.isNotEmpty()) {
-            Pair(cached.departures, cached.fetchedAt)
-        } else throw e
+    val now = System.currentTimeMillis()
+    val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+    if (!forceFresh && cached != null && now - cached.fetchedAt < CACHE_TTL_MS) {
+        Pair(cached.departures, cached.fetchedAt)
+    } else {
+        runCatching {
+            val deps = getDepartures(stopId)
+            val fetchTime = System.currentTimeMillis()
+            Pair(deps.map { dep ->
+                CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.departureMinutes * 60_000)
+            }, fetchTime)
+        }.getOrElse { e ->
+            if (cached != null && cached.departures.isNotEmpty()) {
+                Pair(cached.departures, cached.fetchedAt)
+            } else throw e
+        }
     }
 }

@@ -29,12 +29,11 @@ class TileDataStore(private val context: Context) {
     }
 
     suspend fun updateNearbyDepartures(stops: List<StopWithDepartures>) {
-        val now = System.currentTimeMillis()
         val cached = stops.map { swd ->
             CachedStopDepartures(
                 stopId = swd.stop.id,
                 departures = swd.departures,
-                fetchedAt = now
+                fetchedAt = swd.fetchedAt,
             )
         }
         context.tileDataStore.edit { prefs ->

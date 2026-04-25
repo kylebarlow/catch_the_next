@@ -1,9 +1,11 @@
 package dev.catchthenext.wear.tile
 
+import dev.catchthenext.model.Departure
 import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.location.LatLon
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -24,6 +26,8 @@ class TileStateTest {
         val now = System.currentTimeMillis()
         Pair(minutes.map { cachedDep(it) }, now)
     }
+
+    // --- existing tests ---
 
     @Test
     fun `no permission returns NoPermission`() = runTest {
@@ -167,5 +171,103 @@ class TileStateTest {
         val ready = state as TileState.Ready
         assertEquals(1, ready.stops.size, "Only successful stop should appear")
         assertEquals(1L, ready.stops[0].stop.id)
+    }
+
+    // --- cache tests ---
+
+    private fun cachedStopDeps(stopId: Long, fetchedAt: Long, vararg minutes: Long) =
+        CachedStopDepartures(
+            stopId = stopId,
+            departures = minutes.map { cachedDep(it) },
+            fetchedAt = fetchedAt,
+        )
+
+    @Test
+    fun `makeFetchNetworkDepartures returns cache when fresh`() = runTest {
+        val now = System.currentTimeMillis()
+        val freshStop = cachedStopDeps(1L, now - 30_000, 5L, 10L) // 30s old
+        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshStop))
+
+        var networkCalled = false
+        val fetch = makeFetchNetworkDepartures(
+            getDepartures = { networkCalled = true; emptyList() },
+            cache = cache,
+            forceFresh = false,
+        )
+
+        val (deps, fetchedAt) = fetch(1L)
+        assertFalse(networkCalled, "Network should not be called for fresh cache")
+        assertEquals(2, deps.size)
+        assertEquals(freshStop.fetchedAt, fetchedAt)
+    }
+
+    @Test
+    fun `makeFetchNetworkDepartures hits network when cache is stale`() = runTest {
+        val now = System.currentTimeMillis()
+        val staleStop = cachedStopDeps(1L, now - 90_000, 5L) // 90s old
+        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(staleStop))
+
+        var networkCalled = false
+        val fetch = makeFetchNetworkDepartures(
+            getDepartures = { stopId ->
+                networkCalled = true
+                listOf(Departure(stopId, "10:00", 10L, "14", "Mission 14", "Ferry Plaza"))
+            },
+            cache = cache,
+            forceFresh = false,
+        )
+
+        val (deps, _) = fetch(1L)
+        assertTrue(networkCalled, "Network should be called for stale cache")
+        assertEquals(1, deps.size)
+    }
+
+    @Test
+    fun `makeFetchNetworkDepartures bypasses fresh cache when forceFresh`() = runTest {
+        val now = System.currentTimeMillis()
+        val freshStop = cachedStopDeps(1L, now - 10_000, 5L) // 10s old
+        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshStop))
+
+        var networkCalled = false
+        val fetch = makeFetchNetworkDepartures(
+            getDepartures = { stopId ->
+                networkCalled = true
+                listOf(Departure(stopId, "10:00", 5L, "14", "Mission 14", "Ferry Plaza"))
+            },
+            cache = cache,
+            forceFresh = true,
+        )
+
+        fetch(1L)
+        assertTrue(networkCalled, "Network should be called when forceFresh=true even with fresh cache")
+    }
+
+    @Test
+    fun `mixed cache - only stale stop fetches from network`() = runTest {
+        val now = System.currentTimeMillis()
+        val stop1 = stop(1L, 37.770, -122.410)
+        val stop2 = stop(2L, 37.771, -122.410)
+
+        val freshCached = cachedStopDeps(1L, now - 30_000, 10L)  // 30s old — fresh
+        val staleCached = cachedStopDeps(2L, now - 90_000, 15L)  // 90s old — stale
+        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshCached, staleCached))
+
+        val fetchCallLog = mutableListOf<Long>()
+        val state = computeTileState(
+            favorites = listOf(stop1, stop2),
+            location = sfLocation,
+            hasPermission = true,
+            thresholdMeters = 1609,
+            fetchDepartures = makeFetchNetworkDepartures(
+                getDepartures = { stopId ->
+                    fetchCallLog.add(stopId)
+                    listOf(Departure(stopId, "10:00", 20L, "14", "Mission 14", "Ferry Plaza"))
+                },
+                cache = cache,
+            ),
+        )
+
+        assertTrue(state is TileState.Ready)
+        assertEquals(listOf(2L), fetchCallLog, "Only stale stop 2 should have triggered a network call")
     }
 }

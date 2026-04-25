@@ -3,11 +3,13 @@ package dev.catchthenext.wear.tile
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.ColorBuilders
 import androidx.wear.protolayout.DeviceParametersBuilders.DeviceParameters
 import androidx.wear.protolayout.DimensionBuilders
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.LayoutElementBuilders.LayoutElement
+import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders
 import androidx.wear.protolayout.material.Text
@@ -62,7 +64,7 @@ class ClosestStopTileService : SuspendingTileService() {
                 location = location,
                 hasPermission = hasPerm,
                 thresholdMeters = threshold,
-                fetchDepartures = makeFetchNetworkDepartures(client, cache),
+                fetchDepartures = makeFetchNetworkDepartures({ client.getDepartures(it) }, cache),
                 persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
             )
         }
@@ -84,7 +86,7 @@ class ClosestStopTileService : SuspendingTileService() {
                         TimelineBuilders.TimelineEntry.Builder()
                             .setLayout(
                                 LayoutElementBuilders.Layout.Builder()
-                                    .setRoot(renderLayout(state, deviceParams))
+                                    .setRoot(tappableLayout(renderLayout(state, deviceParams)))
                                     .build()
                             )
                             .build()
@@ -93,6 +95,32 @@ class ClosestStopTileService : SuspendingTileService() {
             )
             .build()
     }
+
+    private fun tappableLayout(inner: LayoutElement): LayoutElement =
+        LayoutElementBuilders.Box.Builder()
+            .setWidth(DimensionBuilders.expand())
+            .setHeight(DimensionBuilders.expand())
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setClickable(
+                        ModifiersBuilders.Clickable.Builder()
+                            .setId("open_app")
+                            .setOnClick(
+                                ActionBuilders.LaunchAction.Builder()
+                                    .setAndroidActivity(
+                                        ActionBuilders.AndroidActivity.Builder()
+                                            .setPackageName(packageName)
+                                            .setClassName("dev.catchthenext.wear.MainActivity")
+                                            .build()
+                                    )
+                                    .build()
+                            )
+                            .build()
+                    )
+                    .build()
+            )
+            .addContent(inner)
+            .build()
 
     private fun renderLayout(state: TileState, deviceParams: DeviceParameters): LayoutElement =
         when (state) {
@@ -144,8 +172,6 @@ class ClosestStopTileService : SuspendingTileService() {
         } else {
             "${state.stops.size} nearby stops"
         }
-        val ageMinutes = (System.currentTimeMillis() - state.fetchedAt) / 60_000
-        val freshness = if (ageMinutes < 1) "Live" else "${ageMinutes}m ago"
 
         return PrimaryLayout.Builder(deviceParams)
             .setPrimaryLabelTextContent(
@@ -156,7 +182,7 @@ class ClosestStopTileService : SuspendingTileService() {
             )
             .setContent(col.build())
             .setSecondaryLabelTextContent(
-                Text.Builder(this, freshness)
+                Text.Builder(this, freshnessLabel(state.fetchedAt))
                     .setTypography(Typography.TYPOGRAPHY_CAPTION3)
                     .setColor(ColorBuilders.argb(TileColors.textDim))
                     .build()
@@ -166,7 +192,6 @@ class ClosestStopTileService : SuspendingTileService() {
 
     private fun departureRow(dep: CachedDeparture, stopName: String, showStopTag: Boolean): LayoutElement {
         val mins = dep.currentMinutes()
-        val timeText = if (mins <= 0L) "Now" else "${mins}m"
         val stopTag = if (showStopTag) " · ${stopName.take(6)}" else ""
         val routeLabel = buildString {
             append(dep.routeShortName)
@@ -177,7 +202,7 @@ class ClosestStopTileService : SuspendingTileService() {
         return LayoutElementBuilders.Row.Builder()
             .setWidth(DimensionBuilders.expand())
             .addContent(
-                Text.Builder(this, timeText)
+                Text.Builder(this, timeLabel(mins))
                     .setTypography(Typography.TYPOGRAPHY_TITLE3)
                     .setColor(ColorBuilders.argb(TileColors.accent))
                     .build()
