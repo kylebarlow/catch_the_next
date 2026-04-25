@@ -3,12 +3,9 @@ package dev.catchthenext.wear.ui
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -127,28 +124,26 @@ private fun DeparturesReadyContent(
 
 @Composable
 private fun GroupedDepartureRow(group: GroupedDeparture) {
-    val timesText = group.minutesList.joinToString(" ") { timeLabel(it) }
+    val timesText = group.minutesList.joinToString("  ") { timeLabel(it) }
     val routeLabel = buildString {
         append(group.routeShortName)
         if (group.headsign.isNotBlank()) append(" → ${group.headsign}")
         if (group.showStopTag) append(" · ${group.stopName}")
     }
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(vertical = 3.dp),
     ) {
-        Text(
-            text = timesText,
-            color = Color(TileColors.accent),
-            style = MaterialTheme.typography.title3,
-        )
-        Spacer(Modifier.width(6.dp))
         Text(
             text = routeLabel,
             modifier = Modifier.basicMarquee(),
             maxLines = 1,
+        )
+        Text(
+            text = timesText,
+            color = Color(TileColors.accent),
+            style = MaterialTheme.typography.title3,
         )
     }
 }

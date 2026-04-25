@@ -28,7 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
-private const val MAX_TILE_ROWS = 6
+private const val MAX_TILE_GROUPS = 3
 
 @OptIn(ExperimentalHorologistApi::class)
 class ClosestStopTileService : SuspendingTileService() {
@@ -145,7 +145,7 @@ class ClosestStopTileService : SuspendingTileService() {
     }
 
     private fun readyLayout(state: TileState.Ready, deviceParams: DeviceParameters): LayoutElement {
-        val groups = groupDepartures(state.stops).take(MAX_TILE_ROWS)
+        val groups = groupDepartures(state.stops).take(MAX_TILE_GROUPS)
 
         val col = LayoutElementBuilders.Column.Builder()
             .setWidth(DimensionBuilders.expand())
@@ -155,7 +155,7 @@ class ClosestStopTileService : SuspendingTileService() {
                 col.addContent(
                     LayoutElementBuilders.Spacer.Builder()
                         .setWidth(DimensionBuilders.expand())
-                        .setHeight(DimensionBuilders.dp(2f))
+                        .setHeight(DimensionBuilders.dp(4f))
                         .build()
                 )
             }
@@ -183,31 +183,27 @@ class ClosestStopTileService : SuspendingTileService() {
     }
 
     private fun groupedDepartureRow(group: GroupedDeparture): LayoutElement {
-        val timesLabel = group.minutesList.joinToString(" ") { timeLabel(it) }
-        val stopTag = if (group.showStopTag) " · ${group.stopName.take(6)}" else ""
+        val timesLabel = group.minutesList.joinToString("  ") { timeLabel(it) }
+        val stopTag = if (group.showStopTag) " · ${group.stopName.take(8)}" else ""
         val routeLabel = buildString {
             append(group.routeShortName)
-            if (group.headsign.isNotBlank()) append(" → ${group.headsign.take(12)}")
+            if (group.headsign.isNotBlank()) append(" → ${group.headsign.take(14)}")
             append(stopTag)
         }
 
-        return LayoutElementBuilders.Row.Builder()
+        return LayoutElementBuilders.Column.Builder()
             .setWidth(DimensionBuilders.expand())
-            .addContent(
-                Text.Builder(this, timesLabel)
-                    .setTypography(Typography.TYPOGRAPHY_TITLE3)
-                    .setColor(ColorBuilders.argb(TileColors.accent))
-                    .build()
-            )
-            .addContent(
-                LayoutElementBuilders.Spacer.Builder()
-                    .setWidth(DimensionBuilders.dp(6f))
-                    .build()
-            )
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_START)
             .addContent(
                 Text.Builder(this, routeLabel)
                     .setTypography(Typography.TYPOGRAPHY_BODY2)
                     .setColor(ColorBuilders.argb(TileColors.textPrimary))
+                    .build()
+            )
+            .addContent(
+                Text.Builder(this, timesLabel)
+                    .setTypography(Typography.TYPOGRAPHY_CAPTION1)
+                    .setColor(ColorBuilders.argb(TileColors.accent))
                     .build()
             )
             .build()
