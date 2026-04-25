@@ -3,6 +3,7 @@ package dev.catchthenext.wear.location
 import dev.catchthenext.model.Stop
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.math.abs
 
@@ -44,5 +45,37 @@ class DistanceTest {
     fun `closestTo with single stop returns that stop`() {
         val only = Stop(5L, "X", "Only", 37.77, -122.41)
         assertEquals(5L, listOf(only).closestTo(0.0, 0.0)?.id)
+    }
+
+    @Test
+    fun `withinMeters returns stops inside threshold sorted by distance`() {
+        val near = Stop(1L, "A", "Near", 37.770, -122.410)
+        val mid = Stop(2L, "B", "Mid", 37.780, -122.410)   // ~1.1 km away
+        val far = Stop(3L, "C", "Far", 37.900, -122.410)   // ~14 km away
+        val stops = listOf(far, mid, near)
+
+        val result = stops.withinMeters(37.770, -122.410, 2000)
+        assertEquals(2, result.size, "Only near and mid should be within 2000m")
+        assertEquals(1L, result[0].first.id, "Nearest first")
+        assertEquals(2L, result[1].first.id)
+    }
+
+    @Test
+    fun `withinMeters returns empty list when nothing in range`() {
+        val far = Stop(1L, "A", "Far", 37.900, -122.410)
+        assertTrue(listOf(far).withinMeters(37.770, -122.410, 100).isEmpty())
+    }
+
+    @Test
+    fun `withinMeters includes stops exactly at threshold boundary`() {
+        // haversine is continuous, so test that threshold is inclusive (<=)
+        val near = Stop(1L, "A", "Near", 37.770, -122.410)  // 0m
+        val result = listOf(near).withinMeters(37.770, -122.410, 0)
+        assertEquals(1, result.size, "Stop at 0m should be within 0m threshold")
+    }
+
+    @Test
+    fun `withinMeters on empty list returns empty list`() {
+        assertTrue(emptyList<Stop>().withinMeters(37.77, -122.41, 1000).isEmpty())
     }
 }

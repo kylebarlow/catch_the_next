@@ -21,6 +21,31 @@ STOPS_RESPONSE = {
     ]
 }
 
+STOPS_RESPONSE_WITH_FEED = {
+    "stops": [
+        {
+            "id": 456,
+            "stop_id": "S2",
+            "stop_name": "Feed Stop",
+            "geometry": {"coordinates": [-122.4, 37.8]},
+            "onestop_id": "s-feed",
+            "feed_version": {
+                "feed": {
+                    "onestop_id": "f-9q9-testfeed",
+                    "name": "Test Transit Agency",
+                    "license": {
+                        "spdx_identifier": "CC-BY-4.0",
+                        "attribution_text": "Data provided by Test Transit Agency",
+                        "attribution_instructions": "Please credit Test Transit Agency",
+                        "use_without_attribution": "no",
+                        "url": "https://example.com/license",
+                    },
+                }
+            },
+        }
+    ]
+}
+
 DEPARTURES_RESPONSE = {
     "stops": [
         {
@@ -30,6 +55,43 @@ DEPARTURES_RESPONSE = {
                     "trip": {
                         "trip_headsign": "Downtown",
                         "route": {"route_short_name": "42"},
+                    },
+                    "schedule_relationship": "SCHEDULED",
+                }
+            ],
+            "children": [],
+        }
+    ]
+}
+
+DEPARTURES_RESPONSE_WITH_AGENCY = {
+    "stops": [
+        {
+            "departures": [
+                {
+                    "departure": {"scheduled_utc": "2099-01-01T12:00:00Z"},
+                    "trip": {
+                        "trip_headsign": "Downtown",
+                        "route": {
+                            "route_short_name": "42",
+                            "agency": {
+                                "agency_name": "Test Transit Authority",
+                                "agency_url": "https://example.com",
+                                "onestop_id": "o-9q9-testtransit",
+                            },
+                            "feed_version": {
+                                "feed": {
+                                    "onestop_id": "f-9q9-testfeed",
+                                    "name": "Test Transit GTFS",
+                                    "license": {
+                                        "spdx_identifier": "CC-BY-4.0",
+                                        "attribution_text": "Data from Test Transit",
+                                        "use_without_attribution": "no",
+                                        "url": "https://example.com/license",
+                                    },
+                                }
+                            },
+                        },
                     },
                     "schedule_relationship": "SCHEDULED",
                 }
@@ -199,3 +261,63 @@ def test_upstream_500_raises_http_response():
         with pytest.raises(bottle.HTTPResponse) as exc:
             proxy.get_stops(37.8, -122.4)
     assert exc.value.status_code == 502
+
+
+def test_get_stops_passes_through_feed_attribution():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE_WITH_FEED)
+        result = proxy.get_stops(37.8, -122.4)
+
+    stop = result["stops"][0]
+    assert stop["feed_onestop_id"] == "f-9q9-testfeed"
+    assert stop["feed_name"] == "Test Transit Agency"
+    assert stop["attribution_text"] == "Data provided by Test Transit Agency"
+    assert stop["attribution_instructions"] == "Please credit Test Transit Agency"
+    assert stop["use_without_attribution"] is False
+    assert stop["license_spdx"] == "CC-BY-4.0"
+    assert stop["license_url"] == "https://example.com/license"
+
+
+def test_get_stops_attribution_fields_are_none_when_no_feed_version():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+        result = proxy.get_stops(37.8, -122.4)
+
+    stop = result["stops"][0]
+    assert stop["feed_onestop_id"] is None
+    assert stop["feed_name"] is None
+    assert stop["attribution_text"] is None
+
+
+def test_get_departures_passes_through_agency_and_feed():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
+        result = proxy.get_departures(42, next_seconds=3600)
+
+    dep = result["departures"][0]
+    assert dep["agency_name"] == "Test Transit Authority"
+    assert dep["feed_onestop_id"] == "f-9q9-testfeed"
+    assert dep["feed_name"] == "Test Transit GTFS"
+    assert dep["attribution_text"] == "Data from Test Transit"
+    assert dep["use_without_attribution"] is False
+    assert dep["license_spdx"] == "CC-BY-4.0"
+
+
+def test_get_departures_attribution_fields_none_when_no_agency():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures(42, next_seconds=3600)
+
+    dep = result["departures"][0]
+    assert dep["agency_name"] is None
+    assert dep["feed_onestop_id"] is None
+    assert dep["attribution_text"] is None
+
+
+def test_proxy_uses_descriptive_user_agent():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+        proxy.get_stops(37.8, -122.4)
+        ua = m.last_request.headers.get("User-Agent", "")
+
+    assert "CatchTheNext" in ua, f"Expected CatchTheNext in User-Agent, got: {ua}"

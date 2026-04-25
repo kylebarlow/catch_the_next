@@ -6,7 +6,8 @@ data class Stop(
     val stopName: String,
     val lat: Double,
     val lon: Double,
-    val onestopId: String? = null
+    val onestopId: String? = null,
+    val feed: FeedAttribution? = null
 ) {
     fun displayString(): String = "$stopName  [ID: $id | GTFS: $stopId]"
 }

@@ -7,7 +7,9 @@ data class Departure(
     val routeShortName: String,
     val routeLongName: String,
     val headsign: String,
-    val scheduleRelationship: String = "SCHEDULED"
+    val scheduleRelationship: String = "SCHEDULED",
+    val agencyName: String? = null,
+    val feed: FeedAttribution? = null
 ) {
     fun displayString(): String {
         val timeLabel = when {

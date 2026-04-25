@@ -23,6 +23,11 @@ fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Dou
 fun List<Stop>.closestTo(lat: Double, lon: Double): Stop? =
     minByOrNull { haversineMeters(lat, lon, it.lat, it.lon) }
 
+fun List<Stop>.withinMeters(lat: Double, lon: Double, meters: Int): List<Pair<Stop, Double>> =
+    map { stop -> Pair(stop, haversineMeters(lat, lon, stop.lat, stop.lon)) }
+        .filter { (_, dist) -> dist <= meters }
+        .sortedBy { (_, dist) -> dist }
+
 fun formatDistance(meters: Double, unit: DistanceUnit): String = when (unit) {
     DistanceUnit.MILES -> "%.1f mi".format(meters / 1609.344)
     DistanceUnit.KM -> "%.1f km".format(meters / 1000.0)

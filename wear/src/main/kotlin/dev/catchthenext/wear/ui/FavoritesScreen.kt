@@ -68,7 +68,6 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
             }
         }
 
-        // Refresh location chip — easy to remove; useful for debugging stale location
         item {
             Chip(
                 onClick = { viewModel.refreshLocation() },
@@ -80,8 +79,8 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
 
         item {
             Chip(
-                onClick = { viewModel.toggleUnit() },
-                label = { Text("Units: ${if (unit == DistanceUnit.MILES) "mi" else "km"}") },
+                onClick = { navController.navigate("settings") },
+                label = { Text("Settings") },
                 colors = ChipDefaults.secondaryChipColors(),
             )
         }

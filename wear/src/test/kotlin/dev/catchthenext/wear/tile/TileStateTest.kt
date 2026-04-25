@@ -59,7 +59,8 @@ class TileStateTest {
     }
 
     @Test
-    fun `three favorites returns Ready with closest stop`() = runTest {
+    fun `in-range stops are returned sorted by distance`() = runTest {
+        // near and mid are within 1609m of sfLocation; far (~3.3km) is not
         val near = stop(1L, 37.770, -122.410)
         val mid = stop(2L, 37.780, -122.410)
         val far = stop(3L, 37.800, -122.410)
@@ -73,8 +74,8 @@ class TileStateTest {
 
         assertTrue(state is TileState.Ready, "Expected Ready but got $state")
         val ready = state as TileState.Ready
-        assertEquals(1L, ready.stop.id)
-        assertEquals(2, ready.departures.size)
+        assertEquals(1L, ready.stops[0].stop.id, "Nearest stop should be first")
+        assertEquals(2, ready.stops[0].departures.size)
     }
 
     @Test
@@ -109,6 +110,62 @@ class TileStateTest {
             fetchDepartures = fetchReturning(-5L, 3L, 10L), // -5 min = past, should be dropped
         )
         val ready = state as TileState.Ready
-        assertEquals(2, ready.departures.size)
+        assertEquals(2, ready.stops[0].departures.size)
+    }
+
+    @Test
+    fun `stops beyond threshold are excluded`() = runTest {
+        val near = stop(1L, 37.770, -122.410)  // 0m from sfLocation
+        val veryFar = stop(2L, 37.900, -122.410)  // ~14km from sfLocation
+
+        val state = computeTileState(
+            favorites = listOf(veryFar, near),
+            location = sfLocation,
+            hasPermission = true,
+            thresholdMeters = 1609,
+            fetchDepartures = fetchReturning(5L),
+        )
+        val ready = state as TileState.Ready
+        assertEquals(1, ready.stops.size, "Only the near stop should be included")
+        assertEquals(1L, ready.stops[0].stop.id)
+    }
+
+    @Test
+    fun `falls back to closest stop when none within threshold`() = runTest {
+        val veryFar = stop(1L, 37.900, -122.410)  // ~14km from sfLocation
+
+        val state = computeTileState(
+            favorites = listOf(veryFar),
+            location = sfLocation,
+            hasPermission = true,
+            thresholdMeters = 100,  // tiny threshold, veryFar is outside
+            fetchDepartures = fetchReturning(5L),
+        )
+        val ready = state as TileState.Ready
+        assertEquals(1, ready.stops.size, "Should fall back to closest even if outside threshold")
+        assertEquals(1L, ready.stops[0].stop.id)
+    }
+
+    @Test
+    fun `partial fetch failure shows successful stops`() = runTest {
+        val stop1 = stop(1L, 37.770, -122.410)
+        val stop2 = stop(2L, 37.771, -122.410)
+
+        var calls = 0
+        val state = computeTileState(
+            favorites = listOf(stop1, stop2),
+            location = sfLocation,
+            hasPermission = true,
+            thresholdMeters = 1609,
+            fetchDepartures = { stopId ->
+                calls++
+                if (stopId == stop2.id) throw RuntimeException("stop2 failed")
+                Pair(listOf(cachedDep(5L)), System.currentTimeMillis())
+            },
+        )
+        assertTrue(state is TileState.Ready, "Expected Ready with partial results")
+        val ready = state as TileState.Ready
+        assertEquals(1, ready.stops.size, "Only successful stop should appear")
+        assertEquals(1L, ready.stops[0].stop.id)
     }
 }

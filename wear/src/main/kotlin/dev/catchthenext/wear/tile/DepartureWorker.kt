@@ -8,7 +8,10 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.catchthenext.wear.WearGraph
+import dev.catchthenext.wear.location.LatLon
+import dev.catchthenext.wear.storage.DistanceUnitStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
@@ -26,8 +29,17 @@ class DepartureWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
         if (favorites.isEmpty()) return Result.success()
 
         val client = WearGraph.transitlandClient()
+        val threshold = DistanceUnitStore(applicationContext).thresholdMetersFlow.first()
+
         val state = withContext(Dispatchers.IO) {
-            updateClosestStopDepartures(lat, lon, favorites, makeFetchDepartures(favorites, dataStore, client, cache))
+            computeTileState(
+                favorites = favorites,
+                location = LatLon(lat, lon),
+                hasPermission = true,
+                thresholdMeters = threshold,
+                fetchDepartures = makeFetchNetworkDepartures(client, cache),
+                persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
+            )
         }
 
         return when (state) {

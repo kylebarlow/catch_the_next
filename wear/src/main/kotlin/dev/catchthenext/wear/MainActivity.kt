@@ -17,11 +17,17 @@ import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.location.LocationProvider
 import dev.catchthenext.wear.location.asHighAccuracy
+import dev.catchthenext.wear.storage.AttributionStore
 import dev.catchthenext.wear.storage.DistanceUnitStore
+import dev.catchthenext.wear.ui.AboutScreen
+import dev.catchthenext.wear.ui.AboutViewModel
 import dev.catchthenext.wear.ui.AddStopScreen
 import dev.catchthenext.wear.ui.AddStopViewModel
 import dev.catchthenext.wear.ui.FavoritesScreen
 import dev.catchthenext.wear.ui.FavoritesViewModel
+import dev.catchthenext.wear.ui.SettingsScreen
+import dev.catchthenext.wear.ui.SettingsThresholdScreen
+import dev.catchthenext.wear.ui.SettingsViewModel
 import dev.catchthenext.wear.ui.StopConfirmScreen
 import dev.catchthenext.wear.ui.StopConfirmViewModel
 import dev.catchthenext.wear.ui.StopDetailsScreen
@@ -67,6 +73,18 @@ private fun WearNavGraph(navController: NavHostController, factory: WearViewMode
                 StopConfirmScreen(navController = navController, viewModel = vm)
             }
         }
+        composable("settings") {
+            val vm: SettingsViewModel = viewModel(factory = factory)
+            SettingsScreen(navController = navController, viewModel = vm)
+        }
+        composable("settings/threshold") {
+            val vm: SettingsViewModel = viewModel(factory = factory)
+            SettingsThresholdScreen(navController = navController, viewModel = vm)
+        }
+        composable("about") {
+            val vm: AboutViewModel = viewModel(factory = factory)
+            AboutScreen(viewModel = vm)
+        }
     }
 }
 
@@ -91,6 +109,19 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                 getNearbyStops = { lat, lon -> WearGraph.transitlandClient().getNearbyStops(lat, lon) },
                 favoritesManager = WearGraph.favoritesManager(context),
                 locationProvider = LocationProvider(context),
+            ) as T
+        modelClass.isAssignableFrom(SettingsViewModel::class.java) -> {
+            val store = DistanceUnitStore(context)
+            SettingsViewModel(
+                distanceUnitFlow = store.unitFlow,
+                persistUnit = { store.setUnit(it) },
+                thresholdMetersFlow = store.thresholdMetersFlow,
+                persistThreshold = { store.setThresholdMeters(it) },
+            ) as T
+        }
+        modelClass.isAssignableFrom(AboutViewModel::class.java) ->
+            AboutViewModel(
+                attributionsFlow = AttributionStore(context).attributionsFlow,
             ) as T
         else -> throw IllegalArgumentException("Unknown ViewModel: $modelClass")
     }
