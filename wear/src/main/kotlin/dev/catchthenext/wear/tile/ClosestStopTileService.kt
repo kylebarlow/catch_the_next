@@ -174,7 +174,7 @@ class ClosestStopTileService : SuspendingTileService() {
         return builder
             .setContent(col.build())
             .setSecondaryLabelTextContent(
-                Text.Builder(this, freshnessLabel(state.fetchedAt))
+                Text.Builder(this, updatedAtLabel(state.fetchedAt))
                     .setTypography(Typography.TYPOGRAPHY_CAPTION3)
                     .setColor(ColorBuilders.argb(TileColors.textDim))
                     .build()

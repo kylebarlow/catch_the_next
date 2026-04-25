@@ -109,7 +109,7 @@ fun groupDepartures(
     filter: (CachedDeparture) -> Boolean = { it.currentMinutes() >= 0 },
 ): List<GroupedDeparture> {
     val showStopTag = stops.size > 1
-    return stops.flatMap { swd ->
+    return stops.sortedBy { it.distanceMeters }.flatMap { swd ->
         swd.departures
             .filter(filter)
             .groupBy { it.routeShortName to it.headsign }
@@ -122,7 +122,8 @@ fun groupDepartures(
                     minutesList = deps.map { it.currentMinutes() }.sorted().take(maxPerGroup),
                 )
             }
-    }.sortedBy { it.minutesList.firstOrNull() ?: Long.MAX_VALUE }
+            .sortedBy { it.minutesList.firstOrNull() ?: Long.MAX_VALUE }
+    }
 }
 
 suspend fun computeTileState(
