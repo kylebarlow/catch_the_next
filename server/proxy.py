@@ -1,4 +1,5 @@
 import json
+import math
 import sys
 import requests
 import bottle
@@ -41,23 +42,50 @@ def _upstream_get(path, params):
     return resp.json()
 
 
+# Upstream sorts by stop_name, not distance — so a low limit can truncate the
+# closest stops if many alphabetically-earlier stops are within radius. Always
+# fetch a wide candidate set, then sort by distance and trim to `limit`.
+_UPSTREAM_STOPS_LIMIT = 100
+
+
 def get_stops(lat, lon, radius=500, limit=20):
     radius = min(int(radius), 2000)
     limit = min(int(limit), 50)
-    data = _upstream_get("stops", {"lat": lat, "lon": lon, "radius": radius, "limit": limit})
+    data = _upstream_get("stops", {
+        "lat": lat, "lon": lon, "radius": radius, "limit": _UPSTREAM_STOPS_LIMIT,
+    })
 
     stops = []
     for s in data.get("stops", []):
         geom = s.get("geometry", {}).get("coordinates", [None, None])
+        slat, slon = geom[1], geom[0]
+        if slat is None or slon is None:
+            continue
         stops.append({
             "id": s.get("id"),
             "stop_id": s.get("stop_id"),
             "stop_name": s.get("stop_name"),
-            "lat": geom[1],
-            "lon": geom[0],
+            "lat": slat,
+            "lon": slon,
             "onestop_id": s.get("onestop_id"),
+            "_dist_m": _haversine_meters(lat, lon, slat, slon),
         })
+
+    stops.sort(key=lambda s: s["_dist_m"])
+    stops = stops[:limit]
+    for s in stops:
+        del s["_dist_m"]
     return {"stops": stops}
+
+
+def _haversine_meters(lat1, lon1, lat2, lon2):
+    r = 6_371_000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def get_departures(stop_id, next_seconds=7200):

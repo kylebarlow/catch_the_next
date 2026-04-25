@@ -76,6 +76,87 @@ def test_get_stops_clamps_radius():
     assert int(sent_params["radius"]) <= 2000
 
 
+# Regression: at Duboce Park (37.76955, -122.4332) the upstream API sorts stops
+# alphabetically. With a low limit, alphabetically-early but distant bus stops
+# crowd out the actually-closest N-train stops ("Duboce St/Noe St/Duboce Park",
+# "Sunset Tunnel East Portal"). The proxy must sort returned stops by distance
+# from the query point and return the closest `limit` stops.
+DUBOCE_PARK_LIKE_RESPONSE = {
+    "stops": [
+        # Far (~400m) but alphabetically first — would dominate a small limit.
+        {"id": 1, "stop_id": "A1", "stop_name": "14th St & Castro St",
+         "geometry": {"coordinates": [-122.4350, 37.7660]}},
+        {"id": 2, "stop_id": "A2", "stop_name": "14th St & Church St",
+         "geometry": {"coordinates": [-122.4291, 37.7660]}},
+        {"id": 3, "stop_id": "A3", "stop_name": "Castro St & Duboce Ave",
+         "geometry": {"coordinates": [-122.4350, 37.7672]}},
+        # Close (~30m) but alphabetically late — the N-train stops the user wants.
+        {"id": 100, "stop_id": "N1", "stop_name": "Duboce St/Noe St/Duboce Park",
+         "geometry": {"coordinates": [-122.43356, 37.76936]}},
+        {"id": 101, "stop_id": "N2", "stop_name": "Sunset Tunnel East Portal",
+         "geometry": {"coordinates": [-122.43351, 37.76929]}},
+    ]
+}
+
+
+def test_get_stops_sorts_by_distance_not_alphabetical():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=DUBOCE_PARK_LIKE_RESPONSE)
+        result = proxy.get_stops(37.76955, -122.43320, radius=600, limit=20)
+
+    names = [s["stop_name"] for s in result["stops"]]
+    # The N-train stops are physically closest and must come first, even though
+    # their names sort alphabetically after the bus stops.
+    assert names[0] in {"Duboce St/Noe St/Duboce Park", "Sunset Tunnel East Portal"}
+    assert names[1] in {"Duboce St/Noe St/Duboce Park", "Sunset Tunnel East Portal"}
+
+
+def test_get_stops_low_limit_keeps_closest_not_alphabetical():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=DUBOCE_PARK_LIKE_RESPONSE)
+        result = proxy.get_stops(37.76955, -122.43320, radius=600, limit=2)
+
+    names = {s["stop_name"] for s in result["stops"]}
+    assert names == {"Duboce St/Noe St/Duboce Park", "Sunset Tunnel East Portal"}
+
+
+def test_get_stops_requests_wide_candidate_set_upstream():
+    # The proxy should always request a wide candidate set from upstream so that
+    # alphabetical truncation cannot drop the closest stops, regardless of the
+    # caller-requested limit.
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+        proxy.get_stops(37.8, -122.4, limit=5)
+        sent_params = dict(pair.split("=") for pair in
+                           m.last_request.url.split("?")[1].split("&"))
+
+    assert int(sent_params["limit"]) >= 100
+
+
+def test_get_stops_skips_entries_missing_geometry():
+    response = {
+        "stops": [
+            {"id": 1, "stop_id": "A", "stop_name": "Has Geom",
+             "geometry": {"coordinates": [-122.4, 37.8]}},
+            {"id": 2, "stop_id": "B", "stop_name": "No Geom",
+             "geometry": {"coordinates": [None, None]}},
+        ]
+    }
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=response)
+        result = proxy.get_stops(37.8, -122.4)
+
+    assert [s["stop_name"] for s in result["stops"]] == ["Has Geom"]
+
+
+def test_get_stops_does_not_leak_internal_distance_field():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+        result = proxy.get_stops(37.8, -122.4)
+
+    assert all("_dist_m" not in s for s in result["stops"])
+
+
 DEPARTURES_RESPONSE_NULL_FIELDS = {
     "stops": [
         {
