@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bus silhouette for adaptive icon foreground. 108dp viewport, safe zone 21-87. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Bus body with three window cutouts (evenOdd fill makes windows transparent) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="
+            M 27,30 L 81,30 Q 86,30 86,35 L 86,57 Q 86,62 81,62 L 27,62 Q 22,62 22,57 L 22,35 Q 22,30 27,30 Z
+            M 28,37 H 42 V 50 H 28 Z
+            M 47,37 H 61 V 50 H 47 Z
+            M 66,37 H 80 V 50 H 66 Z" />
+
+    <!-- Left wheel -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 23,71 A 9,9 0 1 0 41,71 A 9,9 0 1 0 23,71 Z" />
+
+    <!-- Right wheel -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 67,71 A 9,9 0 1 0 85,71 A 9,9 0 1 0 67,71 Z" />
+
+
+</vector>
