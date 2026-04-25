@@ -37,8 +37,13 @@ class LocationProvider(private val context: Context) : CurrentLocationProvider {
         ) == PackageManager.PERMISSION_GRANTED
         if (!hasPerm) return@withContext null
 
+        // For automatic/background fetches, return cached location if less than 1 minute old.
+        if (mode == LocationMode.PASSIVE) {
+            LocationCache.get()?.let { return@withContext it }
+        }
+
         val client = LocationServices.getFusedLocationProviderClient(context)
-        runCatching {
+        val result = runCatching {
             when (mode) {
                 LocationMode.PASSIVE -> {
                     val last = client.lastLocation.await()
@@ -53,6 +58,8 @@ class LocationProvider(private val context: Context) : CurrentLocationProvider {
                 }
             }
         }.getOrNull()
+        result?.also { LocationCache.put(it) }
+        result
     }
 }
 

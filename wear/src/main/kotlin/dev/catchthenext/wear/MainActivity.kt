@@ -90,7 +90,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
             AddStopViewModel(
                 getNearbyStops = { lat, lon -> WearGraph.transitlandClient().getNearbyStops(lat, lon) },
                 favoritesManager = WearGraph.favoritesManager(context),
-                locationProvider = LocationProvider(context).asHighAccuracy(),
+                locationProvider = LocationProvider(context),
             ) as T
         else -> throw IllegalArgumentException("Unknown ViewModel: $modelClass")
     }
