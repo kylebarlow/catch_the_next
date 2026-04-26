@@ -30,6 +30,7 @@ dependencies {
     implementation(libs.play.services.location)
     implementation(libs.coroutines.play.services)
     implementation(libs.work.runtime.ktx)
+    api(libs.play.services.wearable)
     testImplementation(libs.coroutines.test)
     testImplementation(libs.turbine)
     testImplementation(libs.junit.jupiter)

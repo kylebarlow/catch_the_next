@@ -21,6 +21,18 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".PhoneFavoritesSyncListener"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/favorites" />
+            </intent-filter>
+        </service>
+
         <receiver android:name=".widget.DeparturesWidgetReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
