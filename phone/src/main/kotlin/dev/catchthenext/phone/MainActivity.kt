@@ -16,6 +16,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import dev.catchthenext.android.sync.FavoritesSyncListener
+import dev.catchthenext.android.sync.SyncMetadataStore
 import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.DeparturesViewModel
@@ -37,6 +39,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         CoroutineScope(Dispatchers.IO).launch { DeparturesWidget().updateAll(applicationContext) }
+        CoroutineScope(Dispatchers.IO).launch {
+            FavoritesSyncListener.coldStartReconcile(
+                applicationContext,
+                PhoneGraph.favoritesManager(applicationContext),
+                SyncMetadataStore(applicationContext),
+            )
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

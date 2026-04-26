@@ -1,4 +1,4 @@
-deploy_to_watch.sh
+deploy_to_device.sh
 .claude
 # Secrets
 .env

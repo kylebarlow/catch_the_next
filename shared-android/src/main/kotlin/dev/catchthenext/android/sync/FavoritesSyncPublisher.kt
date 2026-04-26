@@ -1,6 +1,7 @@
 package dev.catchthenext.android.sync
 
 import android.content.Context
+import android.util.Log
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import dev.catchthenext.storage.FavoritesManager
@@ -9,8 +10,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+
+private const val TAG = "FavSync"
 
 private const val KEY_PAYLOAD = "payload"
 private const val KEY_UPDATED_AT = "updatedAt"
@@ -19,11 +23,22 @@ private const val DEBOUNCE_MS = 250L
 
 object FavoritesSyncPublisher {
     @Volatile private var debounce: Job? = null
+    @Volatile private var attached = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun attach(context: Context, favoritesManager: FavoritesManager, metaStore: SyncMetadataStore) {
+        if (attached) return
+        attached = true
         scope.launch {
-            favoritesManager.favoritesFlow().collect {
+            var seenFirst = false
+            favoritesManager.favoritesFlow().distinctUntilChanged().collect { favorites ->
+                if (!seenFirst) {
+                    seenFirst = true
+                    // Skip the initial emission if favorites are empty — the app just started and
+                    // has nothing to contribute. Subsequent changes (sync or user action) are
+                    // still published. This prevents overwriting the other device's data on startup.
+                    if (favorites.isEmpty()) return@collect
+                }
                 debounce?.cancel()
                 debounce = launch {
                     delay(DEBOUNCE_MS)
@@ -59,9 +74,11 @@ object FavoritesSyncPublisher {
         // locally and syncs on reconnect). It only fails if Play Services itself is unavailable.
         // Keeping the version at localVersion on failure means future remote updates are not
         // wrongly rejected as "older."
-        val succeeded = runCatching {
+        val result = runCatching {
             Wearable.getDataClient(context).putDataItem(request).await()
-        }.isSuccess
+        }
+        val succeeded = result.isSuccess
+        Log.d(TAG, "publish: version=$newVersion favorites=${payload.favorites.size} succeeded=$succeeded err=${result.exceptionOrNull()?.message}")
         if (succeeded) metaStore.write(newVersion, updatedAt)
     }
 }
