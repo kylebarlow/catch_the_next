@@ -1,3 +1,4 @@
+deploy_to_watch.sh
 .claude
 # Secrets
 .env
