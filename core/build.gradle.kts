@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm")
+    alias(libs.plugins.kotlin.jvm)
     id("java-library")
 }
 
@@ -7,12 +7,12 @@ group = "dev.catchthenext"
 version = "1.0-SNAPSHOT"
 
 dependencies {
-    api("com.squareup.okhttp3:okhttp:4.12.0")
-    api("com.google.code.gson:gson:2.10.1")
-    api("io.github.cdimascio:dotenv-kotlin:6.4.1")
-    api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    api(libs.okhttp)
+    api(libs.gson)
+    api(libs.dotenv)
+    api(libs.coroutines.core)
     testImplementation(kotlin("test"))
-    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation(libs.junit.jupiter)
 }
 
 tasks.test {

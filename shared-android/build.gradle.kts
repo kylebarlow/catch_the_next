@@ -1,6 +1,6 @@
 plugins {
-    id("com.android.library")
-    id("org.jetbrains.kotlin.android")
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.android)
 }
 
 android {
@@ -23,17 +23,16 @@ android {
 
 dependencies {
     api(project(":core"))
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.7")
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
-    implementation("com.google.android.gms:play-services-location:21.3.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
-    implementation("androidx.work:work-runtime-ktx:2.9.1")
-
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
-    testImplementation("app.cash.turbine:turbine:1.2.0")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    implementation(libs.core.ktx)
+    implementation(libs.lifecycle.runtime.ktx)
+    implementation(libs.lifecycle.viewmodel.savedstate)
+    implementation(libs.datastore.preferences)
+    implementation(libs.play.services.location)
+    implementation(libs.coroutines.play.services)
+    implementation(libs.work.runtime.ktx)
+    testImplementation(libs.coroutines.test)
+    testImplementation(libs.turbine)
+    testImplementation(libs.junit.jupiter)
 }
 
 tasks.withType<Test> {

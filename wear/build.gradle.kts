@@ -1,11 +1,11 @@
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
-}
-
-import java.util.Properties
 import java.io.FileInputStream
+import java.util.Properties
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+}
 
 android {
     namespace = "dev.catchthenext.wear"
@@ -50,22 +50,22 @@ android.defaultConfig {
 
 dependencies {
     implementation(project(":shared-android"))
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation(platform("androidx.compose:compose-bom:2024.11.00"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.wear.compose:compose-material:1.4.0")
-    implementation("androidx.wear.compose:compose-foundation:1.4.0")
-    implementation("androidx.wear.compose:compose-navigation:1.4.0")
-    implementation("com.google.android.horologist:horologist-compose-layout:0.6.14")
-    implementation("com.google.android.horologist:horologist-compose-material:0.6.14")
-    implementation("com.google.android.horologist:horologist-tiles:0.6.14")
-    implementation("com.google.android.horologist:horologist-compose-tools:0.6.14")
-    implementation("androidx.wear.tiles:tiles:1.4.0")
-    implementation("androidx.wear.tiles:tiles-material:1.4.0")
-    implementation("androidx.wear.protolayout:protolayout:1.2.0")
-    implementation("androidx.wear.protolayout:protolayout-material:1.2.0")
+    implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.activity.compose)
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.wear.compose.material)
+    implementation(libs.wear.compose.foundation)
+    implementation(libs.wear.compose.navigation)
+    implementation(libs.horologist.compose.layout)
+    implementation(libs.horologist.compose.material)
+    implementation(libs.horologist.tiles)
+    implementation(libs.horologist.compose.tools)
+    implementation(libs.wear.tiles)
+    implementation(libs.wear.tiles.material)
+    implementation(libs.protolayout)
+    implementation(libs.protolayout.material)
 }
 
 tasks.withType<Test> {
