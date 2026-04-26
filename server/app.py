@@ -2,7 +2,7 @@ import json
 import bottle
 from auth import require_auth
 from rate_limit import require_rate_limit
-from proxy import get_stops, get_departures
+from proxy import get_stops, get_departures, get_departures_batch, _BATCH_MAX_STOPS
 
 
 app = bottle.Bottle()
@@ -45,3 +45,40 @@ def departures(stop_id):
     next_seconds = bottle.request.query.get("next", 7200)
     bottle.response.content_type = "application/json"
     return json.dumps(get_departures(stop_id, next_seconds))
+
+
+@app.route("/api/v2/rest/departures")
+@require_auth
+@require_rate_limit
+def departures_batch():
+    stop_ids_param = bottle.request.query.get("stop_ids")
+    if not stop_ids_param:
+        raise bottle.HTTPResponse(
+            body='{"error":"bad_request","detail":"stop_ids is required"}',
+            status=400, headers={"Content-Type": "application/json"},
+        )
+
+    parts = [s.strip() for s in stop_ids_param.split(",") if s.strip()]
+    try:
+        stop_ids = [int(p) for p in parts]
+    except ValueError:
+        raise bottle.HTTPResponse(
+            body='{"error":"bad_request","detail":"stop_ids must be comma-separated integers"}',
+            status=400, headers={"Content-Type": "application/json"},
+        )
+
+    if len(stop_ids) == 0:
+        raise bottle.HTTPResponse(
+            body='{"error":"bad_request","detail":"stop_ids is required"}',
+            status=400, headers={"Content-Type": "application/json"},
+        )
+
+    if len(stop_ids) > _BATCH_MAX_STOPS:
+        raise bottle.HTTPResponse(
+            body='{"error":"bad_request","detail":"too many stop_ids"}',
+            status=400, headers={"Content-Type": "application/json"},
+        )
+
+    next_seconds = bottle.request.query.get("next", 7200)
+    bottle.response.content_type = "application/json"
+    return json.dumps(get_departures_batch(stop_ids, next_seconds))

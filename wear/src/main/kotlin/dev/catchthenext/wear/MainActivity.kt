@@ -26,7 +26,7 @@ import dev.catchthenext.android.tile.StopWithDepartures
 import dev.catchthenext.android.tile.TileDataStore
 import dev.catchthenext.android.tile.TileState
 import dev.catchthenext.android.tile.computeTileState
-import dev.catchthenext.android.tile.makeFetchNetworkDepartures
+import dev.catchthenext.android.tile.makeFetchNetworkDeparturesBatch
 import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.DeparturesViewModel
@@ -160,8 +160,8 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                         location = location,
                         hasPermission = hasPerm,
                         thresholdMeters = threshold,
-                        fetchDepartures = makeFetchNetworkDepartures(
-                            getDepartures = { id -> client.getDepartures(id) },
+                        fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
+                            getDeparturesBatch = { ids -> client.getDeparturesBatch(ids) },
                             cache = cache,
                             forceFresh = forceFresh,
                         ),

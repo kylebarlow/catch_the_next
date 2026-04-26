@@ -111,13 +111,7 @@ def _classify_time_source(stt, schedule_relationship):
     return "SCHEDULED"
 
 
-def get_departures(stop_id, next_seconds=7200):
-    next_seconds = min(int(next_seconds), 86400)
-    data = _upstream_get(
-        f"stops/{stop_id}/departures",
-        {"next": next_seconds, "relative_date": "TODAY"},
-    )
-
+def _shape_departures(data):
     departures = []
     now_minutes = _now_minutes()
 
@@ -178,7 +172,34 @@ def get_departures(stop_id, next_seconds=7200):
         collect(s)
 
     departures.sort(key=lambda d: d["scheduled_departure_minutes"] if d["time_source"] == "SCHEDULED" else (d["live_departure_minutes"] if d["live_departure_minutes"] is not None else d["scheduled_departure_minutes"]))
-    return {"departures": departures}
+    return departures
+
+
+def get_departures(stop_id, next_seconds=7200):
+    next_seconds = min(int(next_seconds), 86400)
+    data = _upstream_get(
+        f"stops/{stop_id}/departures",
+        {"next": next_seconds, "relative_date": "TODAY"},
+    )
+    return {"departures": _shape_departures(data)}
+
+
+_BATCH_MAX_STOPS = 6
+
+
+def get_departures_batch(stop_ids, next_seconds=7200):
+    next_seconds = min(int(next_seconds), 86400)
+    stops = []
+    for stop_id in stop_ids:
+        data = _upstream_get(
+            f"stops/{stop_id}/departures",
+            {"next": next_seconds, "relative_date": "TODAY"},
+        )
+        stops.append({
+            "stop_id": stop_id,
+            "departures": _shape_departures(data),
+        })
+    return {"stops": stops}
 
 
 def _now_minutes():

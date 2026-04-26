@@ -12,6 +12,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 internal const val CACHE_TTL_MS = 60_000L
+internal const val MAX_BATCH_STOPS = 4
 
 data class CachedDeparture(
     val routeShortName: String,
@@ -52,7 +53,7 @@ suspend fun updateNearbyStopsDepartures(
     lon: Double,
     favorites: List<Stop>,
     thresholdMeters: Int,
-    fetchDepartures: suspend (stopId: Long) -> Pair<List<CachedDeparture>, Long>,
+    fetchDeparturesBatch: suspend (stopIds: List<Long>) -> Map<Long, Pair<List<CachedDeparture>, Long>>,
     persistDepartures: suspend (List<StopWithDepartures>) -> Unit = {},
     maxStops: Int = 4,
 ): TileState {
@@ -61,36 +62,28 @@ suspend fun updateNearbyStopsDepartures(
         inRange
     } else {
         val closest = favorites.closestTo(lat, lon) ?: return TileState.NoFavorites
-        listOf(Pair(closest, haversineMeters(lat, lon, closest.lat, closest.lon)))
+        listOf(Pair(closest, haversineMeters(lat, lon, closest.lat, closest.lon))
+        )
     }
 
-    // Pair<StopWithDepartures?, Throwable?> to preserve error messages on total failure
-    val allResults: List<Pair<StopWithDepartures?, Throwable?>> = coroutineScope {
-        selected.map { (stop, distanceMeters) ->
-            async {
-                runCatching { fetchDepartures(stop.id) }
-                    .fold(
-                        onSuccess = { (deps, stopFetchedAt) ->
-                            Pair(
-                                StopWithDepartures(
-                                    stop = stop,
-                                    distanceMeters = distanceMeters,
-                                    departures = deps.filter { it.currentMinutes() >= 0 },
-                                    fetchedAt = stopFetchedAt,
-                                ),
-                                null
-                            )
-                        },
-                        onFailure = { e -> Pair(null, e) }
-                    )
-            }
-        }.awaitAll()
+    val selectedIds = selected.map { it.first.id }
+    val result = runCatching { fetchDeparturesBatch(selectedIds) }
+
+    if (result.isFailure) {
+        val errMsg = result.exceptionOrNull()?.message ?: "Could not load departures"
+        return TileState.NetworkError(errMsg)
     }
 
-    val successful = allResults.mapNotNull { it.first }
+    val batchMap = result.getOrThrow()
+    val successful = mutableListOf<StopWithDepartures>()
+    for ((stop, distanceMeters) in selected) {
+        val (deps, fetchedAt) = batchMap[stop.id] ?: continue
+        val filtered = deps.filter { it.currentMinutes() >= 0 }
+        successful.add(StopWithDepartures(stop = stop, distanceMeters = distanceMeters, departures = filtered, fetchedAt = fetchedAt))
+    }
+
     return if (successful.isEmpty()) {
-        val errMsg = allResults.firstNotNullOfOrNull { it.second?.message } ?: "Could not load departures"
-        TileState.NetworkError(errMsg)
+        TileState.NetworkError("No departures available")
     } else {
         persistDepartures(successful)
         TileState.Ready(successful, successful.minOf { it.fetchedAt })
@@ -138,14 +131,14 @@ suspend fun computeTileState(
     location: LatLon?,
     hasPermission: Boolean,
     thresholdMeters: Int = 1609,
-    fetchDepartures: suspend (stopId: Long) -> Pair<List<CachedDeparture>, Long>,
+    fetchDeparturesBatch: suspend (stopIds: List<Long>) -> Map<Long, Pair<List<CachedDeparture>, Long>>,
     persistDepartures: suspend (List<StopWithDepartures>) -> Unit = {},
 ): TileState {
     if (!hasPermission) return TileState.NoPermission
     if (favorites.isEmpty()) return TileState.NoFavorites
     if (location == null) return TileState.NoLocation
     return updateNearbyStopsDepartures(
-        location.lat, location.lon, favorites, thresholdMeters, fetchDepartures, persistDepartures
+        location.lat, location.lon, favorites, thresholdMeters, fetchDeparturesBatch, persistDepartures
     )
 }
 
@@ -171,5 +164,54 @@ fun makeFetchNetworkDepartures(
                 Pair(cached.departures, cached.fetchedAt)
             } else throw e
         }
+    }
+}
+
+/** Batch-aware network fetch + per-stop 60 s cache check + error fallback. */
+fun makeFetchNetworkDeparturesBatch(
+    getDeparturesBatch: suspend (List<Long>) -> Map<Long, List<Departure>>,
+    cache: CachedTileData,
+    forceFresh: Boolean = false,
+): suspend (List<Long>) -> Map<Long, Pair<List<CachedDeparture>, Long>> = { stopIds ->
+    if (stopIds.isEmpty()) {
+        emptyMap()
+    } else {
+        val now = System.currentTimeMillis()
+        val result = mutableMapOf<Long, Pair<List<CachedDeparture>, Long>>()
+
+        val staleStopIds = mutableListOf<Long>()
+        for (stopId in stopIds) {
+            val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+            if (!forceFresh && cached != null && now - cached.fetchedAt < CACHE_TTL_MS) {
+                result[stopId] = Pair(cached.departures, cached.fetchedAt)
+            } else {
+                staleStopIds.add(stopId)
+            }
+        }
+
+        if (staleStopIds.isNotEmpty()) {
+            runCatching {
+                val batchResult = getDeparturesBatch(staleStopIds)
+                val fetchTime = System.currentTimeMillis()
+                for (stopId in staleStopIds) {
+                    val deps = batchResult[stopId] ?: emptyList()
+                    result[stopId] = Pair(deps.map { dep ->
+                        CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource)
+                    }, fetchTime)
+                }
+            }.getOrElse { e ->
+                for (stopId in staleStopIds) {
+                    if (stopId !in result) {
+                        val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+                        if (cached != null && cached.departures.isNotEmpty()) {
+                            result[stopId] = Pair(cached.departures, cached.fetchedAt)
+                        }
+                    }
+                }
+                if (result.isEmpty()) throw e
+            }
+        }
+
+        result.toMap()
     }
 }

@@ -24,9 +24,9 @@ class TileStateTest {
         timeSource = timeSource
     )
 
-    private fun fetchReturning(vararg minutes: Long): suspend (Long) -> Pair<List<CachedDeparture>, Long> = {
+    private fun fetchReturning(vararg minutes: Long): suspend (List<Long>) -> Map<Long, Pair<List<CachedDeparture>, Long>> = { stopIds ->
         val now = System.currentTimeMillis()
-        Pair(minutes.map { cachedDep(it) }, now)
+        stopIds.associateWith { Pair(minutes.map { cachedDep(it) }, now) }
     }
 
     @Test
@@ -35,7 +35,7 @@ class TileStateTest {
             favorites = listOf(stop(1L, 37.77, -122.41)),
             location = sfLocation,
             hasPermission = false,
-            fetchDepartures = fetchReturning(),
+            fetchDeparturesBatch = fetchReturning(),
         )
         assertEquals(TileState.NoPermission, state)
     }
@@ -46,7 +46,7 @@ class TileStateTest {
             favorites = emptyList(),
             location = sfLocation,
             hasPermission = true,
-            fetchDepartures = fetchReturning(),
+            fetchDeparturesBatch = fetchReturning(),
         )
         assertEquals(TileState.NoFavorites, state)
     }
@@ -57,7 +57,7 @@ class TileStateTest {
             favorites = listOf(stop(1L, 37.77, -122.41)),
             location = null,
             hasPermission = true,
-            fetchDepartures = fetchReturning(),
+            fetchDeparturesBatch = fetchReturning(),
         )
         assertEquals(TileState.NoLocation, state)
     }
@@ -72,7 +72,7 @@ class TileStateTest {
             favorites = listOf(far, mid, near),
             location = sfLocation,
             hasPermission = true,
-            fetchDepartures = fetchReturning(5L, 12L),
+            fetchDeparturesBatch = fetchReturning(5L, 12L),
         )
 
         assertTrue(state is TileState.Ready, "Expected Ready but got $state")
@@ -82,12 +82,12 @@ class TileStateTest {
     }
 
     @Test
-    fun `fetchDepartures throwing returns NetworkError`() = runTest {
+    fun `fetchDeparturesBatch throwing returns NetworkError`() = runTest {
         val state = computeTileState(
             favorites = listOf(stop(1L, 37.77, -122.41)),
             location = sfLocation,
             hasPermission = true,
-            fetchDepartures = { throw RuntimeException("timeout") },
+            fetchDeparturesBatch = { throw RuntimeException("timeout") },
         )
         assertTrue(state is TileState.NetworkError)
         assertEquals("timeout", (state as TileState.NetworkError).message)
@@ -99,7 +99,7 @@ class TileStateTest {
             favorites = emptyList(),
             location = null,
             hasPermission = false,
-            fetchDepartures = fetchReturning(),
+            fetchDeparturesBatch = fetchReturning(),
         )
         assertEquals(TileState.NoPermission, state)
     }
@@ -110,7 +110,7 @@ class TileStateTest {
             favorites = listOf(stop(1L, 37.77, -122.41)),
             location = sfLocation,
             hasPermission = true,
-            fetchDepartures = fetchReturning(-5L, 3L, 10L),
+            fetchDeparturesBatch = fetchReturning(-5L, 3L, 10L),
         )
         val ready = state as TileState.Ready
         assertEquals(2, ready.stops[0].departures.size)
@@ -126,7 +126,7 @@ class TileStateTest {
             location = sfLocation,
             hasPermission = true,
             thresholdMeters = 1609,
-            fetchDepartures = fetchReturning(5L),
+            fetchDeparturesBatch = fetchReturning(5L),
         )
         val ready = state as TileState.Ready
         assertEquals(1, ready.stops.size, "Only the near stop should be included")
@@ -142,7 +142,7 @@ class TileStateTest {
             location = sfLocation,
             hasPermission = true,
             thresholdMeters = 100,
-            fetchDepartures = fetchReturning(5L),
+            fetchDeparturesBatch = fetchReturning(5L),
         )
         val ready = state as TileState.Ready
         assertEquals(1, ready.stops.size, "Should fall back to closest even if outside threshold")
@@ -150,7 +150,7 @@ class TileStateTest {
     }
 
     @Test
-    fun `partial fetch failure shows successful stops`() = runTest {
+    fun `batch fetch returns all stops on success`() = runTest {
         val stop1 = stop(1L, 37.770, -122.410)
         val stop2 = stop(2L, 37.771, -122.410)
 
@@ -159,15 +159,16 @@ class TileStateTest {
             location = sfLocation,
             hasPermission = true,
             thresholdMeters = 1609,
-            fetchDepartures = { stopId ->
-                if (stopId == stop2.id) throw RuntimeException("stop2 failed")
-                Pair(listOf(cachedDep(5L)), System.currentTimeMillis())
+            fetchDeparturesBatch = { stopIds ->
+                val now = System.currentTimeMillis()
+                stopIds.associateWith { id ->
+                    Pair(listOf(cachedDep(5L)), now)
+                }
             },
         )
-        assertTrue(state is TileState.Ready, "Expected Ready with partial results")
+        assertTrue(state is TileState.Ready)
         val ready = state as TileState.Ready
-        assertEquals(1, ready.stops.size, "Only successful stop should appear")
-        assertEquals(1L, ready.stops[0].stop.id)
+        assertEquals(2, ready.stops.size)
     }
 
     private fun swd(stop: Stop, vararg deps: CachedDeparture) =
@@ -319,7 +320,7 @@ class TileStateTest {
     }
 
     @Test
-    fun `mixed cache - only stale stop fetches from network`() = runTest {
+    fun `mixed cache - only stale stop ids sent in batch`() = runTest {
         val now = System.currentTimeMillis()
         val stop1 = stop(1L, 37.770, -122.410)
         val stop2 = stop(2L, 37.771, -122.410)
@@ -328,23 +329,26 @@ class TileStateTest {
         val staleCached = cachedStopDeps(2L, now - 90_000, 15L)
         val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshCached, staleCached))
 
-        val fetchCallLog = mutableListOf<Long>()
+        val batchCallLog = mutableListOf<List<Long>>()
         val state = computeTileState(
             favorites = listOf(stop1, stop2),
             location = sfLocation,
             hasPermission = true,
             thresholdMeters = 1609,
-            fetchDepartures = makeFetchNetworkDepartures(
-                getDepartures = { stopId ->
-                    fetchCallLog.add(stopId)
-                    listOf(Departure(stopId, "10:00", 20L, null, null, "10:00", 20L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
+            fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
+                getDeparturesBatch = { stopIds ->
+                    batchCallLog.add(stopIds)
+                    stopIds.associateWith { id ->
+                        listOf(Departure(id, "10:00", 20L, null, null, "10:00", 20L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
+                    }
                 },
                 cache = cache,
             ),
         )
 
         assertTrue(state is TileState.Ready)
-        assertEquals(listOf(2L), fetchCallLog, "Only stale stop 2 should have triggered a network call")
+        assertEquals(1, batchCallLog.size, "Should make exactly one batch call")
+        assertEquals(listOf(2L), batchCallLog[0], "Only stale stop 2 should be in the batch request")
     }
 
     @Test
@@ -413,5 +417,177 @@ class TileStateTest {
         )))
         assertEquals("14", groups[0].routeShortName)
         assertEquals(3L, groups[0].times[0].minutes)
+    }
+
+    @Test
+    fun `batch - all stale stops make one network call`() = runTest {
+        var batchCallCount = 0
+        val state = computeTileState(
+            favorites = listOf(stop(1L, 37.77, -122.41), stop(2L, 37.771, -122.41)),
+            location = sfLocation,
+            hasPermission = true,
+            fetchDeparturesBatch = { stopIds ->
+                batchCallCount++
+                val now = System.currentTimeMillis()
+                stopIds.associateWith { Pair(listOf(cachedDep(5L)), now) }
+            },
+        )
+        assertTrue(state is TileState.Ready)
+        assertEquals(1, batchCallCount, "Should make exactly one batch call")
+    }
+
+    @Test
+    fun `batch - all fresh stops make no network call`() = runTest {
+        val now = System.currentTimeMillis()
+        val cache = CachedTileData(
+            lat = null, lon = null,
+            nearbyDepartures = listOf(
+                cachedStopDeps(1L, now - 30_000, 5L),
+                cachedStopDeps(2L, now - 20_000, 10L),
+            )
+        )
+
+        var batchCallCount = 0
+        val state = computeTileState(
+            favorites = listOf(stop(1L, 37.77, -122.41), stop(2L, 37.771, -122.41)),
+            location = sfLocation,
+            hasPermission = true,
+            fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
+                getDeparturesBatch = { stopIds ->
+                    batchCallCount++
+                    emptyMap()
+                },
+                cache = cache,
+            ),
+        )
+        assertTrue(state is TileState.Ready)
+        assertEquals(0, batchCallCount, "Should not make a batch call when all stops are fresh")
+    }
+
+    @Test
+    fun `batch - maps departures to correct stop ids`() = runTest {
+        val state = computeTileState(
+            favorites = listOf(stop(1L, 37.77, -122.41), stop(2L, 37.771, -122.41)),
+            location = sfLocation,
+            hasPermission = true,
+            fetchDeparturesBatch = { stopIds ->
+                val now = System.currentTimeMillis()
+                stopIds.associateWith { id ->
+                    Pair(listOf(cachedDep(5L + id)), now)
+                }
+            },
+        )
+        val ready = state as TileState.Ready
+        assertEquals(6L, ready.stops.first { it.stop.id == 1L }.departures.first().currentMinutes())
+        assertEquals(7L, ready.stops.first { it.stop.id == 2L }.departures.first().currentMinutes())
+    }
+
+    @Test
+    fun `batch - empty departures for one stop still produces Ready`() = runTest {
+        val state = computeTileState(
+            favorites = listOf(stop(1L, 37.77, -122.41), stop(2L, 37.771, -122.41)),
+            location = sfLocation,
+            hasPermission = true,
+            fetchDeparturesBatch = { stopIds ->
+                val now = System.currentTimeMillis()
+                mapOf(
+                    1L to Pair(listOf(cachedDep(5L)), now),
+                    2L to Pair(emptyList<CachedDeparture>(), now),
+                )
+            },
+        )
+        val ready = state as TileState.Ready
+        assertEquals(2, ready.stops.size, "Both stops should appear even with empty departures")
+        assertEquals(1, ready.stops.count { it.departures.isNotEmpty() })
+    }
+
+    @Test
+    fun `batch - network failure falls back to cache`() = runTest {
+        val now = System.currentTimeMillis()
+        val cache = CachedTileData(
+            lat = null, lon = null,
+            nearbyDepartures = listOf(cachedStopDeps(1L, now - 90_000, 5L)),
+        )
+
+        val state = computeTileState(
+            favorites = listOf(stop(1L, 37.77, -122.41)),
+            location = sfLocation,
+            hasPermission = true,
+            fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
+                getDeparturesBatch = { throw RuntimeException("network error") },
+                cache = cache,
+            ),
+        )
+        val ready = state as TileState.Ready
+        assertEquals(1, ready.stops.size)
+    }
+
+    @Test
+    fun `makeFetchNetworkDeparturesBatch returns cache when fresh`() = runTest {
+        val now = System.currentTimeMillis()
+        val freshStop = cachedStopDeps(1L, now - 30_000, 5L, 10L)
+        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshStop))
+
+        var networkCalled = false
+        val fetch = makeFetchNetworkDeparturesBatch(
+            getDeparturesBatch = { networkCalled = true; emptyMap() },
+            cache = cache,
+            forceFresh = false,
+        )
+
+        val result = fetch(listOf(1L))
+        assertFalse(networkCalled, "Network should not be called for fresh cache")
+        assertEquals(2, result[1L]!!.first.size)
+    }
+
+    @Test
+    fun `makeFetchNetworkDeparturesBatch bypasses fresh cache when forceFresh`() = runTest {
+        val now = System.currentTimeMillis()
+        val freshStop = cachedStopDeps(1L, now - 10_000, 5L)
+        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshStop))
+
+        var networkCalled = false
+        val fetch = makeFetchNetworkDeparturesBatch(
+            getDeparturesBatch = { stopIds ->
+                networkCalled = true
+                stopIds.associateWith { id ->
+                    listOf(Departure(id, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
+                }
+            },
+            cache = cache,
+            forceFresh = true,
+        )
+
+        fetch(listOf(1L))
+        assertTrue(networkCalled, "Network should be called when forceFresh=true even with fresh cache")
+    }
+
+    @Test
+    fun `makeFetchNetworkDeparturesBatch preserves grouping and sorting`() = runTest {
+        val now = System.currentTimeMillis()
+        val s1 = stop(1L, 37.770, -122.410)
+        val s2 = stop(2L, 37.771, -122.410)
+        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = emptyList())
+
+        val state = computeTileState(
+            favorites = listOf(s1, s2),
+            location = sfLocation,
+            hasPermission = true,
+            fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
+                getDeparturesBatch = { stopIds ->
+                    stopIds.associateWith { id ->
+                        listOf(
+                            Departure(id, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
+                            Departure(id, "10:15", 20L, null, null, "10:15", 20L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
+                        )
+                    }
+                },
+                cache = cache,
+                forceFresh = true,
+            ),
+        )
+        val ready = state as TileState.Ready
+        val groups = groupDepartures(ready.stops)
+        assertTrue(groups.all { it.showStopTag })
     }
 }

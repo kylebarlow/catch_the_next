@@ -484,3 +484,75 @@ def test_proxy_uses_descriptive_user_agent():
         ua = m.last_request.headers.get("User-Agent", "")
 
     assert "CatchTheNext" in ua, f"Expected CatchTheNext in User-Agent, got: {ua}"
+
+
+def test_get_departures_batch_returns_grouped_results():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
+        result = proxy.get_departures_batch([10, 20], next_seconds=3600)
+
+    assert "stops" in result
+    assert len(result["stops"]) == 2
+    assert result["stops"][0]["stop_id"] == 10
+    assert result["stops"][1]["stop_id"] == 20
+    assert "departures" in result["stops"][0]
+    assert "departures" in result["stops"][1]
+    assert len(result["stops"][0]["departures"]) > 0
+    assert len(result["stops"][1]["departures"]) > 0
+
+
+def test_get_departures_batch_preserves_request_order():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/30/departures", json=DEPARTURES_RESPONSE)
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures_batch([30, 10], next_seconds=3600)
+
+    assert result["stops"][0]["stop_id"] == 30
+    assert result["stops"][1]["stop_id"] == 10
+
+
+def test_get_departures_batch_returns_empty_departures_for_stop_with_none():
+    response_no_deps = {"stops": [{"departures": None, "children": None}]}
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        m.get("http://mock-transitland/stops/20/departures", json=response_no_deps)
+        result = proxy.get_departures_batch([10, 20], next_seconds=3600)
+
+    assert result["stops"][0]["stop_id"] == 10
+    assert len(result["stops"][0]["departures"]) > 0
+    assert result["stops"][1]["stop_id"] == 20
+    assert result["stops"][1]["departures"] == []
+
+
+def test_get_departures_batch_applies_next_to_all_calls():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE)
+        proxy.get_departures_batch([10, 20], next_seconds=1800)
+
+    for req in m.request_history:
+        assert "next=1800" in req.url
+
+
+def test_get_departures_batch_shaping_matches_single_stop():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
+        single = proxy.get_departures(42, next_seconds=3600)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
+        batch = proxy.get_departures_batch([42], next_seconds=3600)
+
+    single_deps = single["departures"]
+    batch_deps = batch["stops"][0]["departures"]
+    assert single_deps == batch_deps
+
+
+def test_shape_departures_is_used_by_get_departures():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_ESTIMATE)
+        result = proxy.get_departures(42, next_seconds=3600)
+
+    dep = result["departures"][0]
+    assert dep["time_source"] == "LIVE"
+    assert dep["live_departure_utc"] == "2099-01-01T12:03:00Z"

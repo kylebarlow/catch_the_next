@@ -56,6 +56,23 @@ class TransitlandClient(
             .sortedBy { it.displayDepartureMinutes }
     }
 
+    fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int = 7200): Map<Long, List<Departure>> {
+        if (stopIds.isEmpty()) return emptyMap()
+        val url = "$baseUrl/departures".toHttpUrl().newBuilder()
+            .addQueryParameter("stop_ids", stopIds.joinToString(","))
+            .addQueryParameter("next", nextSeconds.toString())
+            .build()
+
+        val body = executeGet(url.toString())
+        val response = gson.fromJson(body, BatchDeparturesResponse::class.java)
+        return response.stops.associate { batchStop ->
+            val stopId = batchStop.stopId ?: return@associate Pair(0L, emptyList<Departure>())
+            val deps = batchStop.departures.mapNotNull { it.toDeparture(stopId) }
+                .sortedBy { it.displayDepartureMinutes }
+            Pair(stopId, deps)
+        }
+    }
+
     private fun executeGet(url: String): String {
         val request = Request.Builder().url(url).addHeader("X-API-Key", apiKey).get().build()
         val response = http.newCall(request).execute()
@@ -121,6 +138,13 @@ class TransitlandClient(
 
     // Proxy pre-computes departure_minutes and flattens the stop hierarchy.
     private data class DeparturesResponse(val departures: List<ProxyDepartureJson> = emptyList())
+
+    private data class BatchDeparturesResponse(val stops: List<BatchStopDeparturesJson> = emptyList())
+
+    private data class BatchStopDeparturesJson(
+        @SerializedName("stop_id") val stopId: Long? = null,
+        val departures: List<ProxyDepartureJson> = emptyList()
+    )
 
     private data class ProxyDepartureJson(
         @SerializedName("route_short_name") val routeShortName: String? = null,

@@ -34,7 +34,7 @@ import dev.catchthenext.android.tile.TileState
 import dev.catchthenext.android.tile.computeTileState
 import dev.catchthenext.android.tile.departureColorArgb
 import dev.catchthenext.android.tile.groupDepartures
-import dev.catchthenext.android.tile.makeFetchNetworkDepartures
+import dev.catchthenext.android.tile.makeFetchNetworkDeparturesBatch
 import dev.catchthenext.android.tile.timeLabel
 import dev.catchthenext.android.tile.updatedAtLabel
 import dev.catchthenext.model.Stop
@@ -121,8 +121,8 @@ class DeparturesWidget : GlanceAppWidget() {
             location = location,
             hasPermission = true,
             thresholdMeters = threshold,
-            fetchDepartures = makeFetchNetworkDepartures(
-                getDepartures = { id -> client.getDepartures(id) },
+            fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
+                getDeparturesBatch = { ids -> client.getDeparturesBatch(ids) },
                 cache = cache,
             ),
             persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },

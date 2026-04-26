@@ -30,7 +30,7 @@ import dev.catchthenext.android.tile.TileDataStore
 import dev.catchthenext.android.tile.TileState
 import dev.catchthenext.android.tile.computeTileState
 import dev.catchthenext.android.tile.groupDepartures
-import dev.catchthenext.android.tile.makeFetchNetworkDepartures
+import dev.catchthenext.android.tile.makeFetchNetworkDeparturesBatch
 import dev.catchthenext.android.tile.timeLabel
 import dev.catchthenext.android.tile.updatedAtLabel
 import dev.catchthenext.wear.WearGraph
@@ -74,7 +74,7 @@ class ClosestStopTileService : SuspendingTileService() {
                 location = location,
                 hasPermission = hasPerm,
                 thresholdMeters = threshold,
-                fetchDepartures = makeFetchNetworkDepartures({ client.getDepartures(it) }, cache),
+                fetchDeparturesBatch = makeFetchNetworkDeparturesBatch({ client.getDeparturesBatch(it) }, cache),
                 persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
             )
         }
