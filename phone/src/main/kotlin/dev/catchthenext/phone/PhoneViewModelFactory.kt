@@ -1,0 +1,127 @@
+package dev.catchthenext.phone
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.CreationExtras
+import dev.catchthenext.android.location.LatLon
+import dev.catchthenext.android.location.LocationProvider
+import dev.catchthenext.android.location.asHighAccuracy
+import dev.catchthenext.android.storage.AttributionStore
+import dev.catchthenext.android.storage.DistanceUnitStore
+import dev.catchthenext.android.tile.StopWithDepartures
+import dev.catchthenext.android.tile.TileDataStore
+import dev.catchthenext.android.tile.TileState
+import dev.catchthenext.android.tile.computeTileState
+import dev.catchthenext.android.tile.makeFetchNetworkDepartures
+import dev.catchthenext.android.ui.AboutViewModel
+import dev.catchthenext.android.ui.AddStopViewModel
+import dev.catchthenext.android.ui.DeparturesViewModel
+import dev.catchthenext.android.ui.FavoritesViewModel
+import dev.catchthenext.android.ui.SettingsViewModel
+import kotlinx.coroutines.flow.first
+
+class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T = when {
+        modelClass.isAssignableFrom(DeparturesViewModel::class.java) -> {
+            val client = PhoneGraph.transitlandClient()
+            val dataStore = TileDataStore(context)
+            val locationProvider = LocationProvider(context)
+            val favoritesManager = PhoneGraph.favoritesManager(context)
+            val distanceStore = DistanceUnitStore(context)
+            DeparturesViewModel(
+                quickCacheRead = {
+                    val now = System.currentTimeMillis()
+                    val hasPerm = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.ACCESS_COARSE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (!hasPerm) {
+                        TileState.NoPermission
+                    } else {
+                        val favorites = favoritesManager.getFavorites()
+                        if (favorites.isEmpty()) {
+                            TileState.NoFavorites
+                        } else {
+                            val cache = dataStore.read()
+                            val freshStops = cache.nearbyDepartures.filter { now - it.fetchedAt < 60_000L }
+                            val stops = freshStops.mapNotNull { cached ->
+                                val stop = favorites.firstOrNull { it.id == cached.stopId }
+                                if (stop == null) null
+                                else StopWithDepartures(
+                                    stop = stop,
+                                    distanceMeters = 0.0,
+                                    departures = cached.departures.filter { it.currentMinutes() >= 0 },
+                                    fetchedAt = cached.fetchedAt,
+                                )
+                            }
+                            if (stops.isEmpty()) null
+                            else TileState.Ready(stops, stops.minOf { it.fetchedAt })
+                        }
+                    }
+                },
+                computeState = { forceFresh ->
+                    val favorites = favoritesManager.getFavorites()
+                    val hasPerm = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.ACCESS_COARSE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+                    val freshLocation = if (hasPerm) locationProvider.currentLocation() else null
+                    val cache = dataStore.read()
+                    if (freshLocation != null) dataStore.updateLocation(freshLocation.lat, freshLocation.lon)
+                    val lat = freshLocation?.lat ?: cache.lat
+                    val lon = freshLocation?.lon ?: cache.lon
+                    val location = if (lat != null && lon != null) LatLon(lat, lon) else null
+                    val threshold = distanceStore.thresholdMetersFlow.first()
+                    computeTileState(
+                        favorites = favorites,
+                        location = location,
+                        hasPermission = hasPerm,
+                        thresholdMeters = threshold,
+                        fetchDepartures = makeFetchNetworkDepartures(
+                            getDepartures = { id -> client.getDepartures(id) },
+                            cache = cache,
+                            forceFresh = forceFresh,
+                        ),
+                        persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
+                    )
+                }
+            ) as T
+        }
+        modelClass.isAssignableFrom(FavoritesViewModel::class.java) -> {
+            val mgr = PhoneGraph.favoritesManager(context)
+            val locationProvider = LocationProvider(context)
+            val store = DistanceUnitStore(context)
+            FavoritesViewModel(
+                favoritesFlow = mgr.favoritesFlow(),
+                favoritesManager = mgr,
+                locationProvider = locationProvider,
+                highAccuracyLocate = locationProvider.asHighAccuracy(),
+                distanceUnitFlow = store.unitFlow,
+                persistUnit = { store.setUnit(it) },
+            ) as T
+        }
+        modelClass.isAssignableFrom(AddStopViewModel::class.java) ->
+            AddStopViewModel(
+                getNearbyStops = { lat, lon -> PhoneGraph.transitlandClient().getNearbyStops(lat, lon) },
+                favoritesManager = PhoneGraph.favoritesManager(context),
+                locationProvider = LocationProvider(context),
+            ) as T
+        modelClass.isAssignableFrom(SettingsViewModel::class.java) -> {
+            val store = DistanceUnitStore(context)
+            SettingsViewModel(
+                distanceUnitFlow = store.unitFlow,
+                persistUnit = { store.setUnit(it) },
+                thresholdMetersFlow = store.thresholdMetersFlow,
+                persistThreshold = { store.setThresholdMeters(it) },
+            ) as T
+        }
+        modelClass.isAssignableFrom(AboutViewModel::class.java) ->
+            AboutViewModel(
+                attributionsFlow = AttributionStore(context).attributionsFlow,
+            ) as T
+        else -> throw IllegalArgumentException("Unknown ViewModel: $modelClass")
+    }
+}
