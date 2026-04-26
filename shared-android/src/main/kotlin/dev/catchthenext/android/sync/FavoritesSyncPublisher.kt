@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 private const val KEY_PAYLOAD = "payload"
 private const val KEY_UPDATED_AT = "updatedAt"
@@ -40,7 +41,6 @@ object FavoritesSyncPublisher {
         val (localVersion, _) = metaStore.read()
         val newVersion = localVersion + 1
         val updatedAt = System.currentTimeMillis()
-        metaStore.write(newVersion, updatedAt)
 
         val payload = FavoritesSyncPayload(
             favorites = favoritesManager.getFavorites(),
@@ -54,8 +54,14 @@ object FavoritesSyncPublisher {
             dataMap.putLong(KEY_VERSION, newVersion)
         }.asPutDataRequest().setUrgent()
 
-        Wearable.getDataClient(context)
-            .putDataItem(request)
-            .addOnFailureListener { /* sync is best-effort */ }
+        // Only bump local version after the Data Layer accepts the item.
+        // putDataItem queues delivery even when the peer is disconnected (that case succeeds
+        // locally and syncs on reconnect). It only fails if Play Services itself is unavailable.
+        // Keeping the version at localVersion on failure means future remote updates are not
+        // wrongly rejected as "older."
+        val succeeded = runCatching {
+            Wearable.getDataClient(context).putDataItem(request).await()
+        }.isSuccess
+        if (succeeded) metaStore.write(newVersion, updatedAt)
     }
 }
