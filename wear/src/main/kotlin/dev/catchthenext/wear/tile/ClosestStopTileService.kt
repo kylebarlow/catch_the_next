@@ -193,12 +193,30 @@ class ClosestStopTileService : SuspendingTileService() {
     }
 
     private fun groupedDepartureRow(group: GroupedDeparture): LayoutElement {
-        val timesLabel = group.minutesList.joinToString("  ") { timeLabel(it) }
         val stopTag = if (group.showStopTag) " · ${group.stopName.take(8)}" else ""
         val routeLabel = buildString {
             append(group.routeShortName)
             if (group.headsign.isNotBlank()) append(" → ${group.headsign.take(14)}")
             append(stopTag)
+        }
+
+        val timesRow = LayoutElementBuilders.Row.Builder()
+            .setWidth(DimensionBuilders.expand())
+        group.times.forEachIndexed { i, time ->
+            if (i > 0) {
+                timesRow.addContent(
+                    LayoutElementBuilders.Spacer.Builder()
+                        .setWidth(DimensionBuilders.dp(6f))
+                        .setHeight(DimensionBuilders.dp(1f))
+                        .build()
+                )
+            }
+            timesRow.addContent(
+                Text.Builder(this, timeLabel(time.minutes))
+                    .setTypography(Typography.TYPOGRAPHY_CAPTION1)
+                    .setColor(ColorBuilders.argb(TileColors.departureColor(time.timeSource)))
+                    .build()
+            )
         }
 
         return LayoutElementBuilders.Column.Builder()
@@ -210,12 +228,7 @@ class ClosestStopTileService : SuspendingTileService() {
                     .setColor(ColorBuilders.argb(TileColors.textPrimary))
                     .build()
             )
-            .addContent(
-                Text.Builder(this, timesLabel)
-                    .setTypography(Typography.TYPOGRAPHY_CAPTION1)
-                    .setColor(ColorBuilders.argb(TileColors.accent))
-                    .build()
-            )
+            .addContent(timesRow.build())
             .build()
     }
 

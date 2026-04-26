@@ -1,6 +1,7 @@
 package dev.catchthenext.android.tile
 
 import dev.catchthenext.model.Departure
+import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.Stop
 import dev.catchthenext.android.location.LatLon
 import kotlinx.coroutines.test.runTest
@@ -16,10 +17,11 @@ class TileStateTest {
     private fun stop(id: Long, lat: Double, lon: Double) =
         Stop(id, "S$id", "Stop $id", lat, lon)
 
-    private fun cachedDep(minutesFromNow: Long) = CachedDeparture(
+    private fun cachedDep(minutesFromNow: Long, timeSource: DepartureTimeSource = DepartureTimeSource.SCHEDULED) = CachedDeparture(
         routeShortName = "14",
         headsign = "Ferry Plaza",
-        scheduledEpochMillis = System.currentTimeMillis() + minutesFromNow * 60_000
+        departureEpochMillis = System.currentTimeMillis() + minutesFromNow * 60_000,
+        timeSource = timeSource
     )
 
     private fun fetchReturning(vararg minutes: Long): suspend (Long) -> Pair<List<CachedDeparture>, Long> = {
@@ -176,26 +178,26 @@ class TileStateTest {
         val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000),
-            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000),
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
+            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000, DepartureTimeSource.SCHEDULED),
         )))
         assertEquals(1, groups.size)
-        assertEquals(listOf(5L, 15L), groups[0].minutesList)
+        assertEquals(listOf(5L, 15L), groups[0].times.map { it.minutes })
     }
 
     @Test
-    fun `groupDepartures caps minutesList at maxPerGroup`() {
+    fun `groupDepartures caps times at maxPerGroup`() {
         val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000),
-            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000),
-            CachedDeparture("14", "Ferry Plaza", now + 25 * 60_000),
-            CachedDeparture("14", "Ferry Plaza", now + 35 * 60_000),
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
+            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000, DepartureTimeSource.SCHEDULED),
+            CachedDeparture("14", "Ferry Plaza", now + 25 * 60_000, DepartureTimeSource.SCHEDULED),
+            CachedDeparture("14", "Ferry Plaza", now + 35 * 60_000, DepartureTimeSource.SCHEDULED),
         )), maxPerGroup = 3)
         assertEquals(1, groups.size)
-        assertEquals(3, groups[0].minutesList.size)
-        assertEquals(listOf(5L, 15L, 25L), groups[0].minutesList)
+        assertEquals(3, groups[0].times.size)
+        assertEquals(listOf(5L, 15L, 25L), groups[0].times.map { it.minutes })
     }
 
     @Test
@@ -203,8 +205,8 @@ class TileStateTest {
         val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000),
-            CachedDeparture("49", "Caltrain", now + 10 * 60_000),
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
+            CachedDeparture("49", "Caltrain", now + 10 * 60_000, DepartureTimeSource.SCHEDULED),
         )))
         assertEquals(2, groups.size)
         assertEquals("14", groups[0].routeShortName)
@@ -216,8 +218,8 @@ class TileStateTest {
         val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("49", "Caltrain", now + 10 * 60_000),
-            CachedDeparture("14", "Ferry Plaza", now + 3 * 60_000),
+            CachedDeparture("49", "Caltrain", now + 10 * 60_000, DepartureTimeSource.SCHEDULED),
+            CachedDeparture("14", "Ferry Plaza", now + 3 * 60_000, DepartureTimeSource.SCHEDULED),
         )))
         assertEquals("14", groups[0].routeShortName, "Route 14 departs sooner, should be first")
     }
@@ -228,8 +230,8 @@ class TileStateTest {
         val s1 = stop(1L, 37.770, -122.410)
         val s2 = stop(2L, 37.771, -122.410)
         val groups = groupDepartures(listOf(
-            swd(s1, CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000)),
-            swd(s2, CachedDeparture("22", "Mission", now + 8 * 60_000)),
+            swd(s1, CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED)),
+            swd(s2, CachedDeparture("22", "Mission", now + 8 * 60_000, DepartureTimeSource.SCHEDULED)),
         ))
         assertTrue(groups.all { it.showStopTag })
     }
@@ -240,13 +242,13 @@ class TileStateTest {
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(
             stops = listOf(swd(s,
-                CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000),
-                CachedDeparture("14", "Ferry Plaza", now + 70 * 60_000),
+                CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
+                CachedDeparture("14", "Ferry Plaza", now + 70 * 60_000, DepartureTimeSource.SCHEDULED),
             )),
             filter = { it.currentMinutes() in 0..59 },
         )
         assertEquals(1, groups.size)
-        assertEquals(1, groups[0].minutesList.size, "Departure beyond 59 min should be filtered out")
+        assertEquals(1, groups[0].times.size, "Departure beyond 59 min should be filtered out")
     }
 
     private fun cachedStopDeps(stopId: Long, fetchedAt: Long, vararg minutes: Long) =
@@ -285,7 +287,7 @@ class TileStateTest {
         val fetch = makeFetchNetworkDepartures(
             getDepartures = { stopId ->
                 networkCalled = true
-                listOf(Departure(stopId, "10:00", 10L, "14", "Mission 14", "Ferry Plaza"))
+                listOf(Departure(stopId, "10:00", 10L, null, null, "10:00", 10L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
             },
             cache = cache,
             forceFresh = false,
@@ -306,7 +308,7 @@ class TileStateTest {
         val fetch = makeFetchNetworkDepartures(
             getDepartures = { stopId ->
                 networkCalled = true
-                listOf(Departure(stopId, "10:00", 5L, "14", "Mission 14", "Ferry Plaza"))
+                listOf(Departure(stopId, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
             },
             cache = cache,
             forceFresh = true,
@@ -335,7 +337,7 @@ class TileStateTest {
             fetchDepartures = makeFetchNetworkDepartures(
                 getDepartures = { stopId ->
                     fetchCallLog.add(stopId)
-                    listOf(Departure(stopId, "10:00", 20L, "14", "Mission 14", "Ferry Plaza"))
+                    listOf(Departure(stopId, "10:00", 20L, null, null, "10:00", 20L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
                 },
                 cache = cache,
             ),
@@ -343,5 +345,73 @@ class TileStateTest {
 
         assertTrue(state is TileState.Ready)
         assertEquals(listOf(2L), fetchCallLog, "Only stale stop 2 should have triggered a network call")
+    }
+
+    @Test
+    fun `realtime departure maps to LIVE timeSource`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.LIVE),
+        )))
+        assertEquals(DepartureTimeSource.LIVE, groups[0].times[0].timeSource)
+    }
+
+    @Test
+    fun `scheduled-only departure maps to SCHEDULED timeSource`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
+        )))
+        assertEquals(DepartureTimeSource.SCHEDULED, groups[0].times[0].timeSource)
+    }
+
+    @Test
+    fun `cache retains timeSource through makeFetchNetworkDepartures`() = runTest {
+        val now = System.currentTimeMillis()
+        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = emptyList())
+
+        val fetch = makeFetchNetworkDepartures(
+            getDepartures = { stopId ->
+                listOf(
+                    Departure(stopId, "10:00", 10L, "10:03", 13L, "10:03", 13L, DepartureTimeSource.LIVE, "14", "", "Ferry Plaza"),
+                    Departure(stopId, "10:15", 25L, null, null, "10:15", 25L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
+                )
+            },
+            cache = cache,
+            forceFresh = true,
+        )
+
+        val (deps, _) = fetch(1L)
+        assertEquals(2, deps.size)
+        assertEquals(DepartureTimeSource.LIVE, deps[0].timeSource)
+        assertEquals(DepartureTimeSource.SCHEDULED, deps[1].timeSource)
+    }
+
+    @Test
+    fun `grouping preserves source for each displayed time`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.LIVE),
+            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000, DepartureTimeSource.SCHEDULED),
+        )))
+        assertEquals(1, groups.size)
+        assertEquals(2, groups[0].times.size)
+        assertEquals(DepartureTimeSource.LIVE, groups[0].times[0].timeSource)
+        assertEquals(DepartureTimeSource.SCHEDULED, groups[0].times[1].timeSource)
+    }
+
+    @Test
+    fun `sorting uses effective display minutes`() {
+        val now = System.currentTimeMillis()
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            CachedDeparture("49", "Caltrain", now + 10 * 60_000, DepartureTimeSource.SCHEDULED),
+            CachedDeparture("14", "Ferry Plaza", now + 3 * 60_000, DepartureTimeSource.LIVE),
+        )))
+        assertEquals("14", groups[0].routeShortName)
+        assertEquals(3L, groups[0].times[0].minutes)
     }
 }

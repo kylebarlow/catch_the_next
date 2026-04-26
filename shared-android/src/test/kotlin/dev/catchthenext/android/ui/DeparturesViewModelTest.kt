@@ -1,5 +1,6 @@
 package dev.catchthenext.android.ui
 
+import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.Stop
 import dev.catchthenext.android.tile.CachedDeparture
 import dev.catchthenext.android.tile.StopWithDepartures
@@ -28,7 +29,8 @@ class DeparturesViewModelTest {
     private fun cachedDep(minutesFromNow: Long) = CachedDeparture(
         routeShortName = "14",
         headsign = "Ferry Plaza",
-        scheduledEpochMillis = System.currentTimeMillis() + minutesFromNow * 60_000,
+        departureEpochMillis = System.currentTimeMillis() + minutesFromNow * 60_000,
+        timeSource = DepartureTimeSource.SCHEDULED,
     )
 
     @Test

@@ -92,11 +92,11 @@ class DockerIntegrationTest {
 
         println("\n[Docker] Departures for Caltrain 4th & King (ID: $caltrainStopId):")
         departures.forEach { d ->
-            println("  ${d.departureMinutes} min | Route ${d.routeShortName} → ${d.headsign} (${d.departureTime})")
+            println("  ${d.displayDepartureMinutes} min | Route ${d.routeShortName} → ${d.headsign} (${d.displayDepartureTime})")
         }
 
         assertTrue(departures.isNotEmpty(), "Expected departures for Caltrain 4th & King")
-        assertTrue(departures.all { it.departureMinutes >= 0 }, "No past departures should be returned")
+        assertTrue(departures.all { it.displayDepartureMinutes >= 0 }, "No past departures should be returned")
         assertTrue(
             departures.all { it.routeShortName.isNotBlank() || it.routeLongName.isNotBlank() },
             "All departures should have route info"
@@ -111,10 +111,10 @@ class DockerIntegrationTest {
 
         println("\n[Docker] Departures for Caltrain Southbound platform (ID: $caltrainSouthboundPlatformId):")
         departures.forEach { d ->
-            println("  ${d.departureMinutes} min | Route ${d.routeShortName} → ${d.headsign}")
+            println("  ${d.displayDepartureMinutes} min | Route ${d.routeShortName} → ${d.headsign}")
         }
 
         assertTrue(departures.isNotEmpty(), "Expected departures for the Caltrain Southbound platform")
-        assertTrue(departures.all { it.departureMinutes >= 0 }, "No past departures should be returned")
+        assertTrue(departures.all { it.displayDepartureMinutes >= 0 }, "No past departures should be returned")
     }
 }

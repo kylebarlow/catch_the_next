@@ -104,6 +104,13 @@ def _haversine_meters(lat1, lon1, lat2, lon2):
     return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+def _classify_time_source(stt, schedule_relationship):
+    estimated_utc = (stt or {}).get("estimated_utc")
+    if estimated_utc and schedule_relationship != "STATIC":
+        return "LIVE"
+    return "SCHEDULED"
+
+
 def get_departures(stop_id, next_seconds=7200):
     next_seconds = min(int(next_seconds), 86400)
     data = _upstream_get(
@@ -118,10 +125,27 @@ def get_departures(stop_id, next_seconds=7200):
         for dep in stop_data.get("departures") or []:
             stt = dep.get("departure") or {}
             scheduled_utc = stt.get("scheduled_utc", "")
+            estimated_utc = stt.get("estimated_utc", "")
+            scheduled_local = stt.get("scheduled_local", "")
+            estimated_local = stt.get("estimated_local", "")
             gtfs_offset = dep.get("departure_time", "")
-            minutes = _parse_minutes(scheduled_utc, gtfs_offset, now_minutes)
-            if minutes is None or minutes < 0:
+            schedule_relationship = dep.get("schedule_relationship", "SCHEDULED")
+
+            sched_minutes = _parse_minutes(scheduled_utc, gtfs_offset, now_minutes)
+            live_minutes = _parse_minutes(estimated_utc, None, now_minutes) if estimated_utc else None
+
+            time_source = _classify_time_source(stt, schedule_relationship)
+
+            if time_source == "LIVE" and live_minutes is not None:
+                effective_minutes = live_minutes
+            elif sched_minutes is not None:
+                effective_minutes = sched_minutes
+            else:
                 continue
+
+            if effective_minutes < 0:
+                continue
+
             route = (dep.get("trip") or {}).get("route") or {}
             agency = route.get("agency") or {}
             route_feed_version = route.get("feed_version") or {}
@@ -131,9 +155,14 @@ def get_departures(stop_id, next_seconds=7200):
             departures.append({
                 "route_short_name": route.get("route_short_name", ""),
                 "headsign": (dep.get("trip") or {}).get("trip_headsign", ""),
-                "departure_minutes": minutes,
-                "departure_time": scheduled_utc or gtfs_offset,
-                "schedule_relationship": dep.get("schedule_relationship", "SCHEDULED"),
+                "scheduled_departure_time": scheduled_local or scheduled_utc or gtfs_offset or None,
+                "scheduled_departure_utc": scheduled_utc or None,
+                "scheduled_departure_minutes": sched_minutes,
+                "live_departure_time": estimated_local or estimated_utc or None,
+                "live_departure_utc": estimated_utc or None,
+                "live_departure_minutes": live_minutes,
+                "time_source": time_source,
+                "schedule_relationship": schedule_relationship,
                 "agency_name": agency.get("agency_name"),
                 "feed_onestop_id": route_feed.get("onestop_id"),
                 "feed_name": route_feed.get("name"),
@@ -148,7 +177,7 @@ def get_departures(stop_id, next_seconds=7200):
     for s in data.get("stops", []):
         collect(s)
 
-    departures.sort(key=lambda d: d["departure_minutes"])
+    departures.sort(key=lambda d: d["scheduled_departure_minutes"] if d["time_source"] == "SCHEDULED" else (d["live_departure_minutes"] if d["live_departure_minutes"] is not None else d["scheduled_departure_minutes"]))
     return {"departures": departures}
 
 

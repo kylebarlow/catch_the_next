@@ -1,9 +1,16 @@
 package dev.catchthenext.model
 
+enum class DepartureTimeSource { LIVE, SCHEDULED }
+
 data class Departure(
     val stopId: Long,
-    val departureTime: String,
-    val departureMinutes: Long,
+    val scheduledDepartureTime: String?,
+    val scheduledDepartureMinutes: Long?,
+    val liveDepartureTime: String?,
+    val liveDepartureMinutes: Long?,
+    val displayDepartureTime: String,
+    val displayDepartureMinutes: Long,
+    val timeSource: DepartureTimeSource,
     val routeShortName: String,
     val routeLongName: String,
     val headsign: String,
@@ -13,9 +20,9 @@ data class Departure(
 ) {
     fun displayString(): String {
         val timeLabel = when {
-            departureMinutes <= 0 -> "Now    "
-            departureMinutes == 1L -> "1 min  "
-            else -> "${departureMinutes} mins "
+            displayDepartureMinutes <= 0 -> "Now    "
+            displayDepartureMinutes == 1L -> "1 min  "
+            else -> "${displayDepartureMinutes} mins "
         }.padEnd(8)
 
         val routeLabel = when {
@@ -26,7 +33,8 @@ data class Departure(
 
         val headsignLabel = if (headsign.isNotBlank()) " → $headsign" else ""
         val rtLabel = if (scheduleRelationship != "SCHEDULED") " [$scheduleRelationship]" else ""
+        val srcLabel = if (timeSource == DepartureTimeSource.LIVE) " LIVE" else ""
 
-        return "  $timeLabel | $routeLabel$headsignLabel$rtLabel"
+        return "  $timeLabel | $routeLabel$headsignLabel$rtLabel$srcLabel"
     }
 }

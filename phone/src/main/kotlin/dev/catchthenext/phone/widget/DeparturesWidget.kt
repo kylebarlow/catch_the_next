@@ -1,6 +1,7 @@
 package dev.catchthenext.phone.widget
 
 import android.content.Context
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
@@ -13,19 +14,25 @@ import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
+import androidx.glance.layout.Row
+import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.padding
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
+import androidx.glance.unit.ColorProvider
 import dev.catchthenext.android.location.LatLon
 import dev.catchthenext.android.location.haversineMeters
 import dev.catchthenext.android.storage.DistanceUnitStore
 import dev.catchthenext.android.tile.CachedTileData
+import dev.catchthenext.android.tile.GroupedDeparture
+import dev.catchthenext.android.tile.GroupedDepartureTime
 import dev.catchthenext.android.tile.StopWithDepartures
 import dev.catchthenext.android.tile.TileDataStore
 import dev.catchthenext.android.tile.TileState
 import dev.catchthenext.android.tile.computeTileState
+import dev.catchthenext.android.tile.departureColorArgb
 import dev.catchthenext.android.tile.groupDepartures
 import dev.catchthenext.android.tile.makeFetchNetworkDepartures
 import dev.catchthenext.android.tile.timeLabel
@@ -152,13 +159,18 @@ private fun ReadyContent(state: TileState.Ready) {
             style = TextStyle(color = GlanceTheme.colors.onSurface),
             maxLines = 1,
         )
-        Text(
-            text = group.minutesList.joinToString("  ") { timeLabel(it) },
-            style = TextStyle(
-                color = GlanceTheme.colors.primary,
-                fontWeight = FontWeight.Medium,
-            ),
-        )
+        Row {
+            group.times.forEach { time ->
+                Text(
+                    text = timeLabel(time.minutes),
+                    style = TextStyle(
+                        color = ColorProvider(Color(departureColorArgb(time.timeSource))),
+                        fontWeight = FontWeight.Medium,
+                    ),
+                )
+                Spacer(modifier = GlanceModifier.padding(end = 6.dp))
+            }
+        }
     }
     Text(
         text = updatedAtLabel(state.fetchedAt),

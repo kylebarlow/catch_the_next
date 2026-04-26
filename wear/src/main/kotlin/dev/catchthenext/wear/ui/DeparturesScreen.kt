@@ -3,9 +3,12 @@ package dev.catchthenext.wear.ui
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -24,6 +27,7 @@ import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
 import dev.catchthenext.android.tile.GroupedDeparture
 import dev.catchthenext.android.tile.TileState
+import dev.catchthenext.android.tile.departureColorArgb
 import dev.catchthenext.android.tile.freshnessLabel
 import dev.catchthenext.android.tile.groupDepartures
 import dev.catchthenext.android.tile.timeLabel
@@ -126,7 +130,6 @@ private fun DeparturesReadyContent(
 
 @Composable
 private fun GroupedDepartureRow(group: GroupedDeparture) {
-    val timesText = group.minutesList.joinToString("  ") { timeLabel(it) }
     val routeLabel = buildString {
         append(group.routeShortName)
         if (group.headsign.isNotBlank()) append(" → ${group.headsign}")
@@ -142,10 +145,15 @@ private fun GroupedDepartureRow(group: GroupedDeparture) {
             modifier = Modifier.basicMarquee(),
             maxLines = 1,
         )
-        Text(
-            text = timesText,
-            color = Color(TileColors.accent),
-            style = MaterialTheme.typography.title3,
-        )
+        Row {
+            group.times.forEachIndexed { i, time ->
+                if (i > 0) Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = timeLabel(time.minutes),
+                    color = Color(departureColorArgb(time.timeSource)),
+                    style = MaterialTheme.typography.title3,
+                )
+            }
+        }
     }
 }

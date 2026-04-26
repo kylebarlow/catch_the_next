@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -37,12 +38,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import dev.catchthenext.android.tile.GroupedDeparture
+import dev.catchthenext.android.tile.GroupedDepartureTime
 import dev.catchthenext.android.tile.TileState
+import dev.catchthenext.android.tile.departureColorArgb
 import dev.catchthenext.android.tile.freshnessLabel
 import dev.catchthenext.android.tile.groupDepartures
 import dev.catchthenext.android.tile.timeLabel
@@ -165,11 +169,15 @@ private fun DepartureCard(group: GroupedDeparture) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Text(routeLabel, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                text = group.minutesList.joinToString("  ") { timeLabel(it) },
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                group.times.forEach { time ->
+                    Text(
+                        text = timeLabel(time.minutes),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(departureColorArgb(time.timeSource)),
+                    )
+                }
+            }
         }
     }
 }

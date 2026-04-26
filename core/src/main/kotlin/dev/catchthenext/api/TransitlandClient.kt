@@ -3,6 +3,7 @@ package dev.catchthenext.api
 import com.google.gson.annotations.SerializedName
 import com.google.gson.Gson
 import dev.catchthenext.model.Departure
+import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.FeedAttribution
 import dev.catchthenext.model.Stop
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -52,7 +53,7 @@ class TransitlandClient(
         val response = gson.fromJson(body, DeparturesResponse::class.java)
         return response.departures
             .mapNotNull { it.toDeparture(stopId) }
-            .sortedBy { it.departureMinutes }
+            .sortedBy { it.displayDepartureMinutes }
     }
 
     private fun executeGet(url: String): String {
@@ -124,10 +125,14 @@ class TransitlandClient(
     private data class ProxyDepartureJson(
         @SerializedName("route_short_name") val routeShortName: String? = null,
         val headsign: String? = null,
-        @SerializedName("departure_minutes") val departureMinutes: Long? = null,
-        @SerializedName("departure_time") val departureTime: String? = null,
+        @SerializedName("scheduled_departure_time") val scheduledDepartureTime: String? = null,
+        @SerializedName("scheduled_departure_utc") val scheduledDepartureUtc: String? = null,
+        @SerializedName("scheduled_departure_minutes") val scheduledDepartureMinutes: Long? = null,
+        @SerializedName("live_departure_time") val liveDepartureTime: String? = null,
+        @SerializedName("live_departure_utc") val liveDepartureUtc: String? = null,
+        @SerializedName("live_departure_minutes") val liveDepartureMinutes: Long? = null,
+        @SerializedName("time_source") val timeSource: String? = null,
         @SerializedName("schedule_relationship") val scheduleRelationship: String? = null,
-        // Attribution fields (passed through by proxy)
         @SerializedName("agency_name") val agencyName: String? = null,
         @SerializedName("feed_onestop_id") val feedOnestopId: String? = null,
         @SerializedName("feed_name") val feedName: String? = null,
@@ -138,8 +143,23 @@ class TransitlandClient(
         @SerializedName("license_url") val licenseUrl: String? = null,
     ) {
         fun toDeparture(stopId: Long): Departure? {
-            val minutes = departureMinutes ?: return null
-            if (minutes < 0) return null
+            val parsedSource = when (timeSource) {
+                "LIVE" -> DepartureTimeSource.LIVE
+                else -> DepartureTimeSource.SCHEDULED
+            }
+
+            val displayMinutes = when (parsedSource) {
+                DepartureTimeSource.LIVE -> liveDepartureMinutes ?: scheduledDepartureMinutes
+                DepartureTimeSource.SCHEDULED -> scheduledDepartureMinutes
+            } ?: return null
+
+            if (displayMinutes < 0) return null
+
+            val displayTime = when (parsedSource) {
+                DepartureTimeSource.LIVE -> liveDepartureTime ?: scheduledDepartureTime ?: ""
+                DepartureTimeSource.SCHEDULED -> scheduledDepartureTime ?: ""
+            }
+
             val feed = feedOnestopId?.let {
                 FeedAttribution(
                     feedOnestopId = it,
@@ -153,8 +173,13 @@ class TransitlandClient(
             }
             return Departure(
                 stopId = stopId,
-                departureTime = departureTime ?: "",
-                departureMinutes = minutes,
+                scheduledDepartureTime = scheduledDepartureTime,
+                scheduledDepartureMinutes = scheduledDepartureMinutes,
+                liveDepartureTime = liveDepartureTime,
+                liveDepartureMinutes = liveDepartureMinutes,
+                displayDepartureTime = displayTime,
+                displayDepartureMinutes = displayMinutes,
+                timeSource = parsedSource,
                 routeShortName = routeShortName ?: "",
                 routeLongName = "",
                 headsign = headsign ?: "",

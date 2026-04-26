@@ -58,11 +58,11 @@ class TransitlandClientTest {
 
         println("\nDepartures for Caltrain 4th & King (ID: $caltrainStopId):")
         departures.forEach { d ->
-            println("  ${d.departureMinutes} min | Route ${d.routeShortName} → ${d.headsign} (${d.departureTime})")
+            println("  ${d.displayDepartureMinutes} min | Route ${d.routeShortName} → ${d.headsign} (${d.displayDepartureTime})")
         }
 
         assertTrue(departures.isNotEmpty(), "Expected departures for a major Caltrain station")
-        assertTrue(departures.all { it.departureMinutes >= 0 }, "No past departures should be returned")
+        assertTrue(departures.all { it.displayDepartureMinutes >= 0 }, "No past departures should be returned")
         assertTrue(departures.all { it.routeShortName.isNotBlank() || it.routeLongName.isNotBlank() },
             "All departures should have route info")
     }

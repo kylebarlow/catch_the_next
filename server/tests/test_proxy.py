@@ -250,8 +250,169 @@ def test_get_departures_returns_sorted():
 
     assert "departures" in result
     deps = result["departures"]
-    minutes = [d["departure_minutes"] for d in deps]
+    minutes = [d["scheduled_departure_minutes"] for d in deps]
     assert minutes == sorted(minutes)
+
+
+DEPARTURES_RESPONSE_WITH_ESTIMATE = {
+    "stops": [
+        {
+            "departures": [
+                {
+                    "departure": {
+                        "scheduled_utc": "2099-01-01T12:00:00Z",
+                        "estimated_utc": "2099-01-01T12:03:00Z",
+                        "scheduled_local": "12:00",
+                        "estimated_local": "12:03",
+                    },
+                    "trip": {
+                        "trip_headsign": "Downtown",
+                        "route": {"route_short_name": "42"},
+                    },
+                    "schedule_relationship": "SCHEDULED",
+                }
+            ],
+            "children": [],
+        }
+    ]
+}
+
+DEPARTURES_RESPONSE_STATIC_NO_ESTIMATE = {
+    "stops": [
+        {
+            "departures": [
+                {
+                    "departure": {"scheduled_utc": "2099-01-01T12:00:00Z"},
+                    "trip": {
+                        "trip_headsign": "Downtown",
+                        "route": {"route_short_name": "42"},
+                    },
+                    "schedule_relationship": "STATIC",
+                }
+            ],
+            "children": [],
+        }
+    ]
+}
+
+DEPARTURES_RESPONSE_SCHEDULED_ONLY = {
+    "stops": [
+        {
+            "departures": [
+                {
+                    "departure": {"scheduled_utc": "2099-01-01T12:00:00Z"},
+                    "trip": {
+                        "trip_headsign": "Downtown",
+                        "route": {"route_short_name": "42"},
+                    },
+                    "schedule_relationship": "SCHEDULED",
+                }
+            ],
+            "children": [],
+        }
+    ]
+}
+
+
+def test_departure_with_estimate_is_live():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_ESTIMATE)
+        result = proxy.get_departures(42, next_seconds=3600)
+
+    dep = result["departures"][0]
+    assert dep["time_source"] == "LIVE"
+    assert dep["live_departure_utc"] == "2099-01-01T12:03:00Z"
+    assert dep["live_departure_time"] == "12:03"
+    assert dep["scheduled_departure_utc"] == "2099-01-01T12:00:00Z"
+    assert dep["scheduled_departure_minutes"] is not None
+    assert dep["live_departure_minutes"] is not None
+
+
+def test_departure_without_estimate_is_scheduled():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_SCHEDULED_ONLY)
+        result = proxy.get_departures(42, next_seconds=3600)
+
+    dep = result["departures"][0]
+    assert dep["time_source"] == "SCHEDULED"
+    assert dep["live_departure_utc"] is None
+    assert dep["live_departure_minutes"] is None
+    assert dep["scheduled_departure_utc"] == "2099-01-01T12:00:00Z"
+
+
+def test_static_without_estimate_is_scheduled():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_STATIC_NO_ESTIMATE)
+        result = proxy.get_departures(42, next_seconds=3600)
+
+    dep = result["departures"][0]
+    assert dep["time_source"] == "SCHEDULED"
+
+
+def test_live_departure_sorts_by_live_minutes():
+    response = {
+        "stops": [
+            {
+                "departures": [
+                    {
+                        "departure": {
+                            "scheduled_utc": "2099-01-01T12:20:00Z",
+                            "estimated_utc": "2099-01-01T12:18:00Z",
+                        },
+                        "trip": {"trip_headsign": "Late", "route": {"route_short_name": "1"}},
+                        "schedule_relationship": "SCHEDULED",
+                    },
+                    {
+                        "departure": {"scheduled_utc": "2099-01-01T12:05:00Z"},
+                        "trip": {"trip_headsign": "Early", "route": {"route_short_name": "2"}},
+                        "schedule_relationship": "SCHEDULED",
+                    },
+                ],
+                "children": [],
+            }
+        ]
+    }
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=response)
+        result = proxy.get_departures(42, next_seconds=3600)
+
+    deps = result["departures"]
+    minutes = []
+    for d in deps:
+        if d["time_source"] == "LIVE" and d["live_departure_minutes"] is not None:
+            minutes.append(d["live_departure_minutes"])
+        else:
+            minutes.append(d["scheduled_departure_minutes"])
+    assert minutes == sorted(minutes)
+
+
+def test_gtfs_fallback_still_works_without_utc():
+    response = {
+        "stops": [
+            {
+                "departures": [
+                    {
+                        "departure": None,
+                        "trip": {
+                            "trip_headsign": "Fallback",
+                            "route": {"route_short_name": "99"},
+                        },
+                        "departure_time": "25:00:00",
+                        "schedule_relationship": "SCHEDULED",
+                    }
+                ],
+                "children": None,
+            }
+        ]
+    }
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=response)
+        result = proxy.get_departures(42, next_seconds=86400)
+
+    deps = result["departures"]
+    for d in deps:
+        assert "time_source" in d
+        assert "scheduled_departure_time" in d
 
 
 def test_upstream_500_raises_http_response():
@@ -301,6 +462,8 @@ def test_get_departures_passes_through_agency_and_feed():
     assert dep["attribution_text"] == "Data from Test Transit"
     assert dep["use_without_attribution"] is False
     assert dep["license_spdx"] == "CC-BY-4.0"
+    assert dep["time_source"] == "SCHEDULED"
+    assert dep["scheduled_departure_utc"] == "2099-01-01T12:00:00Z"
 
 
 def test_get_departures_attribution_fields_none_when_no_agency():

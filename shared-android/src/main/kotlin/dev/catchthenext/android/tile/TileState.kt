@@ -1,6 +1,7 @@
 package dev.catchthenext.android.tile
 
 import dev.catchthenext.model.Departure
+import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.Stop
 import dev.catchthenext.android.location.LatLon
 import dev.catchthenext.android.location.closestTo
@@ -15,9 +16,10 @@ internal const val CACHE_TTL_MS = 60_000L
 data class CachedDeparture(
     val routeShortName: String,
     val headsign: String,
-    val scheduledEpochMillis: Long
+    val departureEpochMillis: Long,
+    val timeSource: DepartureTimeSource
 ) {
-    fun currentMinutes(): Long = (scheduledEpochMillis - System.currentTimeMillis()) / 60_000
+    fun currentMinutes(): Long = (departureEpochMillis - System.currentTimeMillis()) / 60_000
 }
 
 data class StopWithDepartures(
@@ -100,7 +102,12 @@ data class GroupedDeparture(
     val headsign: String,
     val stopName: String,
     val showStopTag: Boolean,
-    val minutesList: List<Long>,
+    val times: List<GroupedDepartureTime>,
+)
+
+data class GroupedDepartureTime(
+    val minutes: Long,
+    val timeSource: DepartureTimeSource,
 )
 
 fun groupDepartures(
@@ -119,10 +126,10 @@ fun groupDepartures(
                     headsign = key.second,
                     stopName = swd.stop.stopName,
                     showStopTag = showStopTag,
-                    minutesList = deps.map { it.currentMinutes() }.sorted().take(maxPerGroup),
+                    times = deps.map { GroupedDepartureTime(it.currentMinutes(), it.timeSource) }.sortedBy { it.minutes }.take(maxPerGroup),
                 )
             }
-            .sortedBy { it.minutesList.firstOrNull() ?: Long.MAX_VALUE }
+            .sortedBy { it.times.firstOrNull()?.minutes ?: Long.MAX_VALUE }
     }
 }
 
@@ -157,7 +164,7 @@ fun makeFetchNetworkDepartures(
             val deps = getDepartures(stopId)
             val fetchTime = System.currentTimeMillis()
             Pair(deps.map { dep ->
-                CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.departureMinutes * 60_000)
+                CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource)
             }, fetchTime)
         }.getOrElse { e ->
             if (cached != null && cached.departures.isNotEmpty()) {
