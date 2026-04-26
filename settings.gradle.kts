@@ -11,6 +11,7 @@ include(":core")
 include(":cli")
 include(":shared-android")
 include(":wear")
+include(":phone")
 
 dependencyResolutionManagement {
     repositories {
