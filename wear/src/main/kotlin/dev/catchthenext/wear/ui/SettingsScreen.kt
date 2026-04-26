@@ -11,8 +11,9 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
-import dev.catchthenext.wear.location.formatDistance
-import dev.catchthenext.wear.storage.DistanceUnit
+import dev.catchthenext.android.location.formatDistance
+import dev.catchthenext.android.storage.DistanceUnit
+import dev.catchthenext.android.ui.SettingsViewModel
 
 @Composable
 fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {

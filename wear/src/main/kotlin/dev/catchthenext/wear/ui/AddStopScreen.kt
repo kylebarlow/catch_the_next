@@ -22,6 +22,8 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
+import dev.catchthenext.android.ui.AddStopUi
+import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.wear.WearGraph
 
 @Composable

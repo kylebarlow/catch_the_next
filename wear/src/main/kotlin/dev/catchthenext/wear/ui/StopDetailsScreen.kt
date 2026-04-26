@@ -15,6 +15,8 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
+import dev.catchthenext.android.ui.DetailsUi
+import dev.catchthenext.android.ui.StopDetailsViewModel
 
 @Composable
 fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewModel) {

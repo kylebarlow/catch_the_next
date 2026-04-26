@@ -49,10 +49,7 @@ android.defaultConfig {
 }
 
 dependencies {
-    implementation(project(":core"))
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.7")
+    implementation(project(":shared-android"))
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation(platform("androidx.compose:compose-bom:2024.11.00"))
@@ -63,20 +60,12 @@ dependencies {
     implementation("androidx.wear.compose:compose-navigation:1.4.0")
     implementation("com.google.android.horologist:horologist-compose-layout:0.6.14")
     implementation("com.google.android.horologist:horologist-compose-material:0.6.14")
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("com.google.android.horologist:horologist-tiles:0.6.14")
     implementation("com.google.android.horologist:horologist-compose-tools:0.6.14")
     implementation("androidx.wear.tiles:tiles:1.4.0")
     implementation("androidx.wear.tiles:tiles-material:1.4.0")
     implementation("androidx.wear.protolayout:protolayout:1.2.0")
     implementation("androidx.wear.protolayout:protolayout-material:1.2.0")
-    implementation("com.google.android.gms:play-services-location:21.3.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
-
-    implementation("androidx.work:work-runtime-ktx:2.9.1")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
-    testImplementation("app.cash.turbine:turbine:1.2.0")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 }
 
 tasks.withType<Test> {

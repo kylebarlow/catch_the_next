@@ -14,6 +14,7 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
+import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.wear.BuildConfig
 
 @Composable

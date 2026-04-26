@@ -15,6 +15,8 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
+import dev.catchthenext.android.ui.ConfirmUi
+import dev.catchthenext.android.ui.StopConfirmViewModel
 
 @Composable
 fun StopConfirmScreen(navController: NavController, viewModel: StopConfirmViewModel) {

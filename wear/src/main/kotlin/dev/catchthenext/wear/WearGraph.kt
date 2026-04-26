@@ -3,7 +3,7 @@ package dev.catchthenext.wear
 import android.content.Context
 import dev.catchthenext.api.TransitlandClient
 import dev.catchthenext.model.Stop
-import dev.catchthenext.wear.storage.AndroidFavoritesManager
+import dev.catchthenext.android.storage.AndroidFavoritesManager
 
 object WearGraph {
     @Volatile private var clientRef: TransitlandClient? = null

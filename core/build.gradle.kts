@@ -10,6 +10,7 @@ dependencies {
     api("com.squareup.okhttp3:okhttp:4.12.0")
     api("com.google.code.gson:gson:2.10.1")
     api("io.github.cdimascio:dotenv-kotlin:6.4.1")
+    api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 }

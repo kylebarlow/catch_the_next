@@ -22,12 +22,14 @@ import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
-import dev.catchthenext.wear.tile.GroupedDeparture
+import dev.catchthenext.android.tile.GroupedDeparture
+import dev.catchthenext.android.tile.TileState
+import dev.catchthenext.android.tile.freshnessLabel
+import dev.catchthenext.android.tile.groupDepartures
+import dev.catchthenext.android.tile.timeLabel
+import dev.catchthenext.android.ui.DeparturesUi
+import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.wear.tile.TileColors
-import dev.catchthenext.wear.tile.TileState
-import dev.catchthenext.wear.tile.freshnessLabel
-import dev.catchthenext.wear.tile.groupDepartures
-import dev.catchthenext.wear.tile.timeLabel
 
 @Composable
 fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewModel) {

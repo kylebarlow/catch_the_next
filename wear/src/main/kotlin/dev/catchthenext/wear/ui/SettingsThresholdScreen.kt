@@ -12,8 +12,9 @@ import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
-import dev.catchthenext.wear.location.formatDistance
-import dev.catchthenext.wear.storage.DistanceUnit
+import dev.catchthenext.android.location.formatDistance
+import dev.catchthenext.android.storage.DistanceUnit
+import dev.catchthenext.android.ui.SettingsViewModel
 import kotlin.math.abs
 
 // Predefined threshold options in meters (~0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0 miles)

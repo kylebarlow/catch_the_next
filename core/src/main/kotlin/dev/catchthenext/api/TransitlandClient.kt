@@ -13,14 +13,15 @@ import java.util.concurrent.TimeUnit
 
 class TransitlandClient(
     private val apiKey: String,
-    private val baseUrl: String = "http://localhost:39217/api/v2/rest"
+    private val baseUrl: String = "http://localhost:39217/api/v2/rest",
+    private val userAgent: String = "CatchTheNext/1.0 (Android; +https://codeberg.org/ursidaureus/catch_the_next)",
 ) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             val req = chain.request().newBuilder()
-                .header("User-Agent", "CatchTheNext/1.0 (Android Wear; +https://codeberg.org/ursidaureus/catch_the_next)")
+                .header("User-Agent", userAgent)
                 .build()
             chain.proceed(req)
         }
