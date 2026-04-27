@@ -48,13 +48,29 @@ object FavoritesSyncPublisher {
         }
     }
 
+    /** Publish immediately, bypassing the debounce. Used by the republish handshake. */
+    suspend fun publishNow(context: Context, favoritesManager: FavoritesManager, metaStore: SyncMetadataStore) {
+        publish(context, favoritesManager, metaStore)
+    }
+
+    /**
+     * If a previous putDataItem failed, retry it now. Called from coldStartReconcile and
+     * CapabilityWatcher when the peer becomes reachable.
+     */
+    suspend fun retryPendingIfNeeded(context: Context, favoritesManager: FavoritesManager, metaStore: SyncMetadataStore) {
+        if (metaStore.read().publishPending) {
+            Log.d(TAG, "retryPendingIfNeeded: pending publish found, retrying")
+            publish(context, favoritesManager, metaStore)
+        }
+    }
+
     private suspend fun publish(
         context: Context,
         favoritesManager: FavoritesManager,
         metaStore: SyncMetadataStore,
     ) {
-        val (localVersion, _) = metaStore.read()
-        val newVersion = localVersion + 1
+        val meta = metaStore.read()
+        val newVersion = meta.ownVersion + 1
         val updatedAt = System.currentTimeMillis()
 
         val payload = FavoritesSyncPayload(
@@ -72,13 +88,17 @@ object FavoritesSyncPublisher {
         // Only bump local version after the Data Layer accepts the item.
         // putDataItem queues delivery even when the peer is disconnected (that case succeeds
         // locally and syncs on reconnect). It only fails if Play Services itself is unavailable.
-        // Keeping the version at localVersion on failure means future remote updates are not
+        // Keeping the version at ownVersion on failure means future remote updates are not
         // wrongly rejected as "older."
         val result = runCatching {
             Wearable.getDataClient(context).putDataItem(request).await()
         }
         val succeeded = result.isSuccess
         Log.d(TAG, "publish: version=$newVersion favorites=${payload.favorites.size} succeeded=$succeeded err=${result.exceptionOrNull()?.message}")
-        if (succeeded) metaStore.write(newVersion, updatedAt)
+        if (succeeded) {
+            metaStore.writeOwn(newVersion, updatedAt)
+        } else {
+            metaStore.setPublishPending(true)
+        }
     }
 }

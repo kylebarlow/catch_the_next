@@ -43,9 +43,25 @@ import dev.catchthenext.wear.ui.SettingsScreen
 import dev.catchthenext.wear.ui.SettingsThresholdScreen
 import dev.catchthenext.wear.ui.StopConfirmScreen
 import dev.catchthenext.wear.ui.StopDetailsScreen
+import dev.catchthenext.android.sync.FavoritesSyncListener
+import dev.catchthenext.android.sync.SyncMetadataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        CoroutineScope(Dispatchers.IO).launch {
+            FavoritesSyncListener.coldStartReconcile(
+                applicationContext,
+                WearGraph.favoritesManager(applicationContext),
+                SyncMetadataStore(applicationContext),
+            )
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {

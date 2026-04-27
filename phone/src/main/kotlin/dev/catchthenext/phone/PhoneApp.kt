@@ -2,6 +2,7 @@ package dev.catchthenext.phone
 
 import android.app.Application
 import androidx.glance.appwidget.updateAll
+import dev.catchthenext.android.sync.CapabilityWatcher
 import dev.catchthenext.android.sync.FavoritesSyncListener
 import dev.catchthenext.android.sync.FavoritesSyncPublisher
 import dev.catchthenext.android.sync.SyncMetadataStore
@@ -27,6 +28,7 @@ class PhoneApp : Application() {
         val mgr = PhoneGraph.favoritesManager(this)
         val meta = SyncMetadataStore(this)
         FavoritesSyncPublisher.attach(this, mgr, meta)
+        CapabilityWatcher.start(this, mgr, meta)
         CoroutineScope(Dispatchers.IO).launch {
             FavoritesSyncListener.coldStartReconcile(this@PhoneApp, mgr, meta)
         }
