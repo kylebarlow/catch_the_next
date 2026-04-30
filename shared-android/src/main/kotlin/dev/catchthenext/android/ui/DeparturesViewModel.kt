@@ -11,7 +11,7 @@ import kotlinx.coroutines.launch
 
 sealed interface DeparturesUi {
     object Loading : DeparturesUi
-    data class Loaded(val tileState: TileState) : DeparturesUi
+    data class Loaded(val tileState: TileState, val isRefreshing: Boolean = false) : DeparturesUi
 }
 
 class DeparturesViewModel(
@@ -32,8 +32,11 @@ class DeparturesViewModel(
     }
 
     fun refresh(force: Boolean = false) {
-        _ui.value = DeparturesUi.Loading
         viewModelScope.launch(ioDispatcher) {
+            val current = _ui.value
+            if (current is DeparturesUi.Loaded) {
+                _ui.value = current.copy(isRefreshing = true)
+            }
             _ui.value = DeparturesUi.Loaded(computeState(force))
         }
     }

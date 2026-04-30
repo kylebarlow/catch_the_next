@@ -89,13 +89,15 @@ class DeparturesViewModelTest {
     }
 
     @Test
-    fun `refresh transitions through Loading before Loaded`() = runTest(testDispatcher) {
+    fun `refresh transitions through Loaded with isRefreshing before final Loaded`() = runTest(testDispatcher) {
         val vm = DeparturesViewModel(
             computeState = { TileState.NoLocation },
             ioDispatcher = testDispatcher,
         )
+        vm.refresh()
         val state = vm.ui.value
-        assertTrue(state is DeparturesUi.Loaded, "State should be Loaded after init completes")
+        assertTrue(state is DeparturesUi.Loaded, "State should be Loaded after refresh completes")
+        assertTrue(!(state as DeparturesUi.Loaded).isRefreshing, "Final state should not be refreshing")
     }
 
     @Test

@@ -50,7 +50,19 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
                 Text("Fetching departures…")
             }
         }
-        is DeparturesUi.Loaded -> when (val tileState = state.tileState) {
+        is DeparturesUi.Loaded -> DeparturesContent(state.tileState, state.isRefreshing, navController, viewModel)
+    }
+}
+
+@Composable
+private fun DeparturesContent(
+    tileState: TileState,
+    isRefreshing: Boolean,
+    navController: NavController,
+    viewModel: DeparturesViewModel,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        when (tileState) {
             is TileState.NoFavorites -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("No favorites yet")
@@ -74,6 +86,17 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
                 }
             }
             is TileState.Ready -> DeparturesReadyContent(tileState, navController, viewModel)
+        }
+        if (isRefreshing) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(top = 8.dp).size(20.dp),
+                    strokeWidth = 2.dp,
+                )
+            }
         }
     }
 }

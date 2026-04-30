@@ -27,7 +27,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -62,7 +61,7 @@ import dev.catchthenext.android.ui.DeparturesViewModel
 @Composable
 fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewModel) {
     val ui by viewModel.ui.collectAsState()
-    val isLoading = ui is DeparturesUi.Loading
+    val isRefreshing = ui is DeparturesUi.Loaded && (ui as DeparturesUi.Loaded).isRefreshing
     val context = LocalContext.current
 
     val permLauncher = rememberLauncherForActivityResult(
@@ -106,7 +105,7 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
         bottomBar = { MainBottomBar(navController = navController, currentRoute = "departures") }
     ) { padding ->
         PullToRefreshBox(
-            isRefreshing = isLoading,
+            isRefreshing = isRefreshing,
             onRefresh = { viewModel.refresh(force = true) },
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
@@ -114,27 +113,37 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
                 is DeparturesUi.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                is DeparturesUi.Loaded -> DeparturesContent(state.tileState, navController)
+                is DeparturesUi.Loaded -> DeparturesContent(state.tileState, state.isRefreshing, navController)
             }
         }
     }
 }
 
 @Composable
-private fun DeparturesContent(state: TileState, navController: NavController) {
-    when (state) {
-        is TileState.NoPermission -> CenteredMessage("Location permission required")
-        is TileState.NoFavorites -> Column(
-            Modifier.fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text("No favorites yet")
-            Button(onClick = { navController.navigate("favorites") }) { Text("Manage favorites") }
+private fun DeparturesContent(state: TileState, isRefreshing: Boolean, navController: NavController) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        when (state) {
+            is TileState.NoPermission -> CenteredMessage("Location permission required")
+            is TileState.NoFavorites -> Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text("No favorites yet")
+                Button(onClick = { navController.navigate("favorites") }) { Text("Manage favorites") }
+            }
+            is TileState.NoLocation -> CenteredMessage("Getting location…")
+            is TileState.NetworkError -> CenteredMessage("Network error: ${state.message}")
+            is TileState.Ready -> ReadyContent(state)
         }
-        is TileState.NoLocation -> CenteredMessage("Getting location…")
-        is TileState.NetworkError -> CenteredMessage("Network error: ${state.message}")
-        is TileState.Ready -> ReadyContent(state)
+        if (isRefreshing) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp).size(24.dp), strokeWidth = 2.dp)
+            }
+        }
     }
 }
 
