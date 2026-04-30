@@ -25,11 +25,15 @@ class FavoritesViewModel(
     private val highAccuracyLocate: CurrentLocationProvider = locationProvider,
     distanceUnitFlow: Flow<DistanceUnit>,
     private val persistUnit: suspend (DistanceUnit) -> Unit,
+    private val readAlertsByStopId: (suspend () -> Map<Long, Boolean>)? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     val favorites: StateFlow<List<Stop>> = favoritesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _alertsByStopId = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
+    val alertsByStopId: StateFlow<Map<Long, Boolean>> = _alertsByStopId.asStateFlow()
 
     private val _location = MutableStateFlow<LatLon?>(null)
     val location: StateFlow<LatLon?> = _location.asStateFlow()
@@ -46,6 +50,11 @@ class FavoritesViewModel(
 
     init {
         fetchLocation(locationProvider)
+        if (readAlertsByStopId != null) {
+            viewModelScope.launch(ioDispatcher) {
+                _alertsByStopId.value = readAlertsByStopId()
+            }
+        }
     }
 
     fun removeFavorite(stopId: Long) {

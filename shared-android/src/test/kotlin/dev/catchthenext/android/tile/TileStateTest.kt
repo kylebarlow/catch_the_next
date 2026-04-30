@@ -1,5 +1,6 @@
 package dev.catchthenext.android.tile
 
+import dev.catchthenext.api.StopDepartures
 import dev.catchthenext.model.Departure
 import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.Stop
@@ -24,9 +25,9 @@ class TileStateTest {
         timeSource = timeSource
     )
 
-    private fun fetchReturning(vararg minutes: Long): suspend (List<Long>) -> Map<Long, Pair<List<CachedDeparture>, Long>> = { stopIds ->
+    private fun fetchReturning(vararg minutes: Long): suspend (List<Long>) -> Map<Long, CachedStopFetch> = { stopIds ->
         val now = System.currentTimeMillis()
-        stopIds.associateWith { Pair(minutes.map { cachedDep(it) }, now) }
+        stopIds.associateWith { CachedStopFetch(minutes.map { cachedDep(it) }, emptyList(), now) }
     }
 
     @Test
@@ -72,7 +73,10 @@ class TileStateTest {
             favorites = listOf(far, mid, near),
             location = sfLocation,
             hasPermission = true,
-            fetchDeparturesBatch = fetchReturning(5L, 12L),
+            fetchDeparturesBatch = { stopIds ->
+                val now = System.currentTimeMillis()
+                stopIds.associateWith { CachedStopFetch(listOf(cachedDep(5L), cachedDep(12L)), emptyList(), now) }
+            },
         )
 
         assertTrue(state is TileState.Ready, "Expected Ready but got $state")
@@ -161,9 +165,7 @@ class TileStateTest {
             thresholdMeters = 1609,
             fetchDeparturesBatch = { stopIds ->
                 val now = System.currentTimeMillis()
-                stopIds.associateWith { id ->
-                    Pair(listOf(cachedDep(5L)), now)
-                }
+                stopIds.associateWith { CachedStopFetch(listOf(cachedDep(5L)), emptyList(), now) }
             },
         )
         assertTrue(state is TileState.Ready)
@@ -267,15 +269,15 @@ class TileStateTest {
 
         var networkCalled = false
         val fetch = makeFetchNetworkDepartures(
-            getDepartures = { networkCalled = true; emptyList() },
+            getDepartures = { stopId -> networkCalled = true; StopDepartures(stopId, emptyList()) },
             cache = cache,
             forceFresh = false,
         )
 
-        val (deps, fetchedAt) = fetch(1L)
+        val result = fetch(1L)
         assertFalse(networkCalled, "Network should not be called for fresh cache")
-        assertEquals(2, deps.size)
-        assertEquals(freshStop.fetchedAt, fetchedAt)
+        assertEquals(2, result.departures.size)
+        assertEquals(freshStop.fetchedAt, result.fetchedAt)
     }
 
     @Test
@@ -288,15 +290,15 @@ class TileStateTest {
         val fetch = makeFetchNetworkDepartures(
             getDepartures = { stopId ->
                 networkCalled = true
-                listOf(Departure(stopId, "10:00", 10L, null, null, "10:00", 10L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
+                StopDepartures(stopId, listOf(Departure(stopId, "10:00", 10L, null, null, "10:00", 10L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
             },
             cache = cache,
             forceFresh = false,
         )
 
-        val (deps, _) = fetch(1L)
+        val result = fetch(1L)
         assertTrue(networkCalled, "Network should be called for stale cache")
-        assertEquals(1, deps.size)
+        assertEquals(1, result.departures.size)
     }
 
     @Test
@@ -309,7 +311,7 @@ class TileStateTest {
         val fetch = makeFetchNetworkDepartures(
             getDepartures = { stopId ->
                 networkCalled = true
-                listOf(Departure(stopId, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
+                StopDepartures(stopId, listOf(Departure(stopId, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
             },
             cache = cache,
             forceFresh = true,
@@ -339,7 +341,7 @@ class TileStateTest {
                 getDeparturesBatch = { stopIds ->
                     batchCallLog.add(stopIds)
                     stopIds.associateWith { id ->
-                        listOf(Departure(id, "10:00", 20L, null, null, "10:00", 20L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
+                        StopDepartures(id, listOf(Departure(id, "10:00", 20L, null, null, "10:00", 20L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
                     }
                 },
                 cache = cache,
@@ -378,19 +380,19 @@ class TileStateTest {
 
         val fetch = makeFetchNetworkDepartures(
             getDepartures = { stopId ->
-                listOf(
+                StopDepartures(stopId, listOf(
                     Departure(stopId, "10:00", 10L, "10:03", 13L, "10:03", 13L, DepartureTimeSource.LIVE, "14", "", "Ferry Plaza"),
                     Departure(stopId, "10:15", 25L, null, null, "10:15", 25L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
-                )
+                ))
             },
             cache = cache,
             forceFresh = true,
         )
 
-        val (deps, _) = fetch(1L)
-        assertEquals(2, deps.size)
-        assertEquals(DepartureTimeSource.LIVE, deps[0].timeSource)
-        assertEquals(DepartureTimeSource.SCHEDULED, deps[1].timeSource)
+        val result = fetch(1L)
+        assertEquals(2, result.departures.size)
+        assertEquals(DepartureTimeSource.LIVE, result.departures[0].timeSource)
+        assertEquals(DepartureTimeSource.SCHEDULED, result.departures[1].timeSource)
     }
 
     @Test
@@ -429,7 +431,7 @@ class TileStateTest {
             fetchDeparturesBatch = { stopIds ->
                 batchCallCount++
                 val now = System.currentTimeMillis()
-                stopIds.associateWith { Pair(listOf(cachedDep(5L)), now) }
+                stopIds.associateWith { CachedStopFetch(listOf(cachedDep(5L)), emptyList(), now) }
             },
         )
         assertTrue(state is TileState.Ready)
@@ -473,7 +475,7 @@ class TileStateTest {
             fetchDeparturesBatch = { stopIds ->
                 val now = System.currentTimeMillis()
                 stopIds.associateWith { id ->
-                    Pair(listOf(cachedDep(5L + id)), now)
+                    CachedStopFetch(listOf(cachedDep(5L + id)), emptyList(), now)
                 }
             },
         )
@@ -491,8 +493,8 @@ class TileStateTest {
             fetchDeparturesBatch = { stopIds ->
                 val now = System.currentTimeMillis()
                 mapOf(
-                    1L to Pair(listOf(cachedDep(5L)), now),
-                    2L to Pair(emptyList<CachedDeparture>(), now),
+                    1L to CachedStopFetch(listOf(cachedDep(5L)), emptyList(), now),
+                    2L to CachedStopFetch(emptyList(), emptyList(), now),
                 )
             },
         )
@@ -537,7 +539,7 @@ class TileStateTest {
 
         val result = fetch(listOf(1L))
         assertFalse(networkCalled, "Network should not be called for fresh cache")
-        assertEquals(2, result[1L]!!.first.size)
+        assertEquals(2, result[1L]!!.departures.size)
     }
 
     @Test
@@ -551,7 +553,7 @@ class TileStateTest {
             getDeparturesBatch = { stopIds ->
                 networkCalled = true
                 stopIds.associateWith { id ->
-                    listOf(Departure(id, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza"))
+                    StopDepartures(id, listOf(Departure(id, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
                 }
             },
             cache = cache,
@@ -576,10 +578,10 @@ class TileStateTest {
             fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                 getDeparturesBatch = { stopIds ->
                     stopIds.associateWith { id ->
-                        listOf(
+                        StopDepartures(id, listOf(
                             Departure(id, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
                             Departure(id, "10:15", 20L, null, null, "10:15", 20L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
-                        )
+                        ))
                     }
                 },
                 cache = cache,

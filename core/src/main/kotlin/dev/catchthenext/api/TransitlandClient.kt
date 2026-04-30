@@ -2,6 +2,9 @@ package dev.catchthenext.api
 
 import com.google.gson.annotations.SerializedName
 import com.google.gson.Gson
+import dev.catchthenext.model.Alert
+import dev.catchthenext.model.AlertActivePeriod
+import dev.catchthenext.model.AlertSeverity
 import dev.catchthenext.model.Departure
 import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.FeedAttribution
@@ -43,7 +46,7 @@ class TransitlandClient(
         return response.stops.mapNotNull { it.toStop(fallbackLat = lat, fallbackLon = lon) }
     }
 
-    override fun getDepartures(stopId: Long, nextSeconds: Int): List<Departure> {
+    override fun getDepartures(stopId: Long, nextSeconds: Int): StopDepartures {
         val url = "$baseUrl/stops/$stopId/departures".toHttpUrl().newBuilder()
             .addQueryParameter("next", nextSeconds.toString())
             .addQueryParameter("relative_date", "TODAY")
@@ -51,12 +54,14 @@ class TransitlandClient(
 
         val body = executeGet(url.toString())
         val response = gson.fromJson(body, DeparturesResponse::class.java)
-        return response.departures
+        val departures = response.departures
             .mapNotNull { it.toDeparture(stopId) }
             .sortedBy { it.displayDepartureMinutes }
+        val alerts = response.alerts?.mapNotNull { it.toAlert() } ?: emptyList()
+        return StopDepartures(stopId, departures, alerts)
     }
 
-    override fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int): Map<Long, List<Departure>> {
+    override fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int): Map<Long, StopDepartures> {
         if (stopIds.isEmpty()) return emptyMap()
         val url = "$baseUrl/departures".toHttpUrl().newBuilder()
             .addQueryParameter("stop_ids", stopIds.joinToString(","))
@@ -66,10 +71,11 @@ class TransitlandClient(
         val body = executeGet(url.toString())
         val response = gson.fromJson(body, BatchDeparturesResponse::class.java)
         return response.stops.associate { batchStop ->
-            val stopId = batchStop.stopId ?: return@associate Pair(0L, emptyList<Departure>())
+            val stopId = batchStop.stopId ?: return@associate Pair(0L, StopDepartures(0L, emptyList()))
             val deps = batchStop.departures.mapNotNull { it.toDeparture(stopId) }
                 .sortedBy { it.displayDepartureMinutes }
-            Pair(stopId, deps)
+            val alerts = batchStop.alerts?.mapNotNull { it.toAlert() } ?: emptyList()
+            Pair(stopId, StopDepartures(stopId, deps, alerts))
         }
     }
 
@@ -137,14 +143,55 @@ class TransitlandClient(
     )
 
     // Proxy pre-computes departure_minutes and flattens the stop hierarchy.
-    private data class DeparturesResponse(val departures: List<ProxyDepartureJson> = emptyList())
+    private data class DeparturesResponse(
+        val departures: List<ProxyDepartureJson> = emptyList(),
+        val alerts: List<AlertJson>? = null,
+    )
 
     private data class BatchDeparturesResponse(val stops: List<BatchStopDeparturesJson> = emptyList())
 
     private data class BatchStopDeparturesJson(
         @SerializedName("stop_id") val stopId: Long? = null,
-        val departures: List<ProxyDepartureJson> = emptyList()
+        val departures: List<ProxyDepartureJson> = emptyList(),
+        val alerts: List<AlertJson>? = null,
     )
+
+    private data class AlertActivePeriodJson(
+        val start: Long? = null,
+        val end: Long? = null,
+    )
+
+    private data class AlertJson(
+        val cause: String? = null,
+        val effect: String? = null,
+        @SerializedName("severity_level") val severityLevel: String? = null,
+        @SerializedName("header_text") val headerText: String? = null,
+        @SerializedName("description_text") val descriptionText: String? = null,
+        @SerializedName("tts_header_text") val ttsHeaderText: String? = null,
+        @SerializedName("tts_description_text") val ttsDescriptionText: String? = null,
+        val url: String? = null,
+        @SerializedName("active_period") val activePeriod: List<AlertActivePeriodJson>? = null,
+    ) {
+        fun toAlert(): Alert? {
+            val severity = when (severityLevel?.uppercase()) {
+                "INFO" -> AlertSeverity.INFO
+                "WARNING" -> AlertSeverity.WARNING
+                "SEVERE" -> AlertSeverity.SEVERE
+                else -> AlertSeverity.UNKNOWN_SEVERITY
+            }
+            return Alert(
+                cause = cause,
+                effect = effect,
+                severityLevel = severity,
+                headerText = headerText,
+                descriptionText = descriptionText,
+                ttsHeaderText = ttsHeaderText,
+                ttsDescriptionText = ttsDescriptionText,
+                url = url,
+                activePeriod = activePeriod?.map { AlertActivePeriod(it.start, it.end) } ?: emptyList(),
+            )
+        }
+    }
 
     private data class ProxyDepartureJson(
         @SerializedName("route_short_name") val routeShortName: String? = null,

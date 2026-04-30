@@ -9,13 +9,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -169,7 +174,18 @@ private fun DepartureCard(group: GroupedDeparture, showAgency: Boolean = false) 
     }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Text(routeLabel, style = MaterialTheme.typography.bodyMedium)
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                if (group.hasAlert) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Service alert",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
+                Text(routeLabel, style = MaterialTheme.typography.bodyMedium)
+            }
             if (showAgency) {
                 group.agencyName?.let { agency ->
                     Text(

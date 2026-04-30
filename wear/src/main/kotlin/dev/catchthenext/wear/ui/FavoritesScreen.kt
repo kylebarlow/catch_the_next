@@ -1,16 +1,22 @@
 package dev.catchthenext.wear.ui
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
+import androidx.wear.compose.material.Icon
 import androidx.wear.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
 import dev.catchthenext.android.location.formatDistance
 import dev.catchthenext.android.location.haversineMeters
@@ -24,6 +30,7 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
     val unit by viewModel.distanceUnit.collectAsState()
     val locationFetchedAt by viewModel.locationFetchedAt.collectAsState()
     val locationRefreshing by viewModel.locationRefreshing.collectAsState()
+    val alertsByStopId by viewModel.alertsByStopId.collectAsState()
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -65,6 +72,16 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
                     onClick = { navController.navigate("details/${stop.id}") },
                     label = { Text(stop.stopName) },
                     secondaryLabel = distanceLabel?.let { { Text(it) } },
+                    icon = if (alertsByStopId[stop.id] == true) {
+                        {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Service alert",
+                                tint = Color(0xFFFFC107),
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    } else null,
                 )
             }
         }

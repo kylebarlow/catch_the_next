@@ -8,6 +8,7 @@ internal object TileColors {
     val textDim: Int = 0xFFB0B0B0.toInt()
     val liveDeparture: Int = 0xFF4CAF50.toInt()
     val scheduledDeparture: Int = 0xFFFFA726.toInt()
+    val warning: Int = 0xFFFFC107.toInt()
 
     fun departureColor(timeSource: DepartureTimeSource): Int =
         if (timeSource == DepartureTimeSource.LIVE) liveDeparture else scheduledDeparture

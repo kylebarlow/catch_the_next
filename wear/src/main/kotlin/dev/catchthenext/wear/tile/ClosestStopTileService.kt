@@ -209,20 +209,63 @@ class ClosestStopTileService : SuspendingTileService() {
             )
         }
 
+        val routeLabelRow = if (group.hasAlert) {
+            LayoutElementBuilders.Row.Builder()
+                .addContent(
+                    LayoutElementBuilders.Image.Builder()
+                        .setResourceId(ALERT_ICON_ID)
+                        .setWidth(DimensionBuilders.dp(12f))
+                        .setHeight(DimensionBuilders.dp(12f))
+                        .setColorFilter(LayoutElementBuilders.ColorFilter.Builder()
+                            .setTint(ColorBuilders.argb(TileColors.warning))
+                            .build())
+                        .build()
+                )
+                .addContent(
+                    LayoutElementBuilders.Spacer.Builder()
+                        .setWidth(DimensionBuilders.dp(4f))
+                        .setHeight(DimensionBuilders.dp(1f))
+                        .build()
+                )
+                .addContent(
+                    Text.Builder(this, routeLabel)
+                        .setTypography(Typography.TYPOGRAPHY_BODY2)
+                        .setColor(ColorBuilders.argb(TileColors.textPrimary))
+                        .build()
+                )
+                .build()
+        } else {
+            Text.Builder(this, routeLabel)
+                .setTypography(Typography.TYPOGRAPHY_BODY2)
+                .setColor(ColorBuilders.argb(TileColors.textPrimary))
+                .build()
+        }
+
         return LayoutElementBuilders.Column.Builder()
             .setWidth(DimensionBuilders.expand())
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_START)
-            .addContent(
-                Text.Builder(this, routeLabel)
-                    .setTypography(Typography.TYPOGRAPHY_BODY2)
-                    .setColor(ColorBuilders.argb(TileColors.textPrimary))
-                    .build()
-            )
+            .addContent(routeLabelRow)
             .addContent(timesRow.build())
             .build()
     }
 
     override suspend fun resourcesRequest(requestParams: RequestBuilders.ResourcesRequest): ResourceBuilders.Resources {
-        return ResourceBuilders.Resources.Builder().build()
+        return ResourceBuilders.Resources.Builder()
+            .setVersion(requestParams.version)
+            .addIdToImageMapping(
+                ALERT_ICON_ID,
+                ResourceBuilders.ImageResource.Builder()
+                    .setAndroidResourceByResId(
+                        ResourceBuilders.AndroidImageResourceByResId.Builder()
+                            .setResourceId(dev.catchthenext.wear.R.drawable.ic_alert)
+                            .build()
+                    )
+                    .build()
+            )
+            .build()
+    }
+
+    companion object {
+        private const val ALERT_ICON_ID = "alert_icon"
     }
 }

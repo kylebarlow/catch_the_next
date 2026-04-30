@@ -2,6 +2,8 @@ package dev.catchthenext.android.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.catchthenext.api.StopDepartures
+import dev.catchthenext.model.Alert
 import dev.catchthenext.model.Departure
 import dev.catchthenext.model.Stop
 import dev.catchthenext.storage.FavoritesManager
@@ -13,12 +15,12 @@ import kotlinx.coroutines.launch
 
 sealed interface DetailsUi {
     object Loading : DetailsUi
-    data class Loaded(val stop: Stop, val departures: List<Departure>, val isFavorite: Boolean) : DetailsUi
+    data class Loaded(val stop: Stop, val departures: List<Departure>, val isFavorite: Boolean, val alerts: List<Alert> = emptyList()) : DetailsUi
     data class Error(val msg: String) : DetailsUi
 }
 
 class StopDetailsViewModel(
-    private val getDepartures: suspend (Long) -> List<Departure>,
+    private val getDepartures: suspend (Long) -> StopDepartures,
     private val favoritesManager: FavoritesManager,
     val stopId: Long,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -37,9 +39,9 @@ class StopDetailsViewModel(
                 val favorites = favoritesManager.getFavorites()
                 val stop = favorites.firstOrNull { it.id == stopId }
                     ?: Stop(stopId, stopId.toString(), "Stop $stopId", 0.0, 0.0)
-                val departures = getDepartures(stopId)
+                val stopDeps = getDepartures(stopId)
                 val isFav = favoritesManager.isFavorite(stopId)
-                DetailsUi.Loaded(stop, departures, isFav)
+                DetailsUi.Loaded(stop, stopDeps.departures, isFav, stopDeps.alerts)
             }.getOrElse { DetailsUi.Error(it.message ?: "Error loading departures") }
         }
     }

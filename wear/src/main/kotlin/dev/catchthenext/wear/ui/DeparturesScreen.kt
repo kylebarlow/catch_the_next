@@ -8,7 +8,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -16,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material.Icon
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
@@ -140,11 +144,22 @@ private fun GroupedDepartureRow(group: GroupedDeparture) {
             .fillMaxWidth()
             .padding(vertical = 3.dp),
     ) {
-        Text(
-            text = routeLabel,
-            modifier = Modifier.basicMarquee(),
-            maxLines = 1,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (group.hasAlert) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "Service alert",
+                    tint = Color(0xFFFFC107),
+                    modifier = Modifier.size(12.dp),
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+            }
+            Text(
+                text = routeLabel,
+                modifier = Modifier.basicMarquee(),
+                maxLines = 1,
+            )
+        }
         Row {
             group.times.forEachIndexed { i, time ->
                 if (i > 0) Spacer(modifier = Modifier.width(6.dp))

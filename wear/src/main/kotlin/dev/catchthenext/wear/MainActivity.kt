@@ -152,6 +152,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                                     distanceMeters = 0.0,
                                     departures = cached.departures.filter { it.currentMinutes() >= 0 },
                                     fetchedAt = cached.fetchedAt,
+                                    alerts = cached.alerts ?: emptyList(),
                                 )
                             }
                             if (stops.isEmpty()) null
@@ -190,6 +191,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
             val mgr = WearGraph.favoritesManager(context)
             val locationProvider = LocationProvider(context)
             val store = DistanceUnitStore(context)
+            val dataStore = TileDataStore(context)
             FavoritesViewModel(
                 favoritesFlow = mgr.favoritesFlow(),
                 favoritesManager = mgr,
@@ -197,6 +199,10 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                 highAccuracyLocate = locationProvider.asHighAccuracy(),
                 distanceUnitFlow = store.unitFlow,
                 persistUnit = { store.setUnit(it) },
+                readAlertsByStopId = {
+                    dataStore.read().nearbyDepartures
+                        .associate { it.stopId to (it.alerts?.isNotEmpty() == true) }
+                },
             ) as T
         }
         modelClass.isAssignableFrom(AddStopViewModel::class.java) ->
@@ -245,7 +251,7 @@ class StopConfirmViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
         StopConfirmViewModel(
-            getDepartures = { id -> WearGraph.transitlandClient().getDepartures(id) },
+            getDepartures = { id -> WearGraph.transitlandClient().getDepartures(id).departures },
             favoritesManager = WearGraph.favoritesManager(context),
             stop = stop,
         ) as T

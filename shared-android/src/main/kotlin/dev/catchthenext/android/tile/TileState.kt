@@ -1,5 +1,7 @@
 package dev.catchthenext.android.tile
 
+import dev.catchthenext.api.StopDepartures
+import dev.catchthenext.model.Alert
 import dev.catchthenext.model.Departure
 import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.Stop
@@ -29,6 +31,7 @@ data class StopWithDepartures(
     val distanceMeters: Double,
     val departures: List<CachedDeparture>,
     val fetchedAt: Long = System.currentTimeMillis(),
+    val alerts: List<Alert> = emptyList(),
 )
 
 sealed interface TileState {
@@ -49,12 +52,18 @@ sealed interface TileState {
  * closest favorite when none are in range. [fetchDepartures] handles network + cache fallback
  * per stop. [persistDepartures] is called once with all successful results.
  */
+data class CachedStopFetch(
+    val departures: List<CachedDeparture>,
+    val alerts: List<Alert>,
+    val fetchedAt: Long,
+)
+
 suspend fun updateNearbyStopsDepartures(
     lat: Double,
     lon: Double,
     favorites: List<Stop>,
     thresholdMeters: Int,
-    fetchDeparturesBatch: suspend (stopIds: List<Long>) -> Map<Long, Pair<List<CachedDeparture>, Long>>,
+    fetchDeparturesBatch: suspend (stopIds: List<Long>) -> Map<Long, CachedStopFetch>,
     persistDepartures: suspend (List<StopWithDepartures>) -> Unit = {},
     maxStops: Int = 4,
 ): TileState {
@@ -78,9 +87,9 @@ suspend fun updateNearbyStopsDepartures(
     val batchMap = result.getOrThrow()
     val successful = mutableListOf<StopWithDepartures>()
     for ((stop, distanceMeters) in selected) {
-        val (deps, fetchedAt) = batchMap[stop.id] ?: continue
-        val filtered = deps.filter { it.currentMinutes() >= 0 }
-        successful.add(StopWithDepartures(stop = stop, distanceMeters = distanceMeters, departures = filtered, fetchedAt = fetchedAt))
+        val fetch = batchMap[stop.id] ?: continue
+        val filtered = fetch.departures.filter { it.currentMinutes() >= 0 }
+        successful.add(StopWithDepartures(stop = stop, distanceMeters = distanceMeters, departures = filtered, alerts = fetch.alerts, fetchedAt = fetch.fetchedAt))
     }
 
     return if (successful.isEmpty()) {
@@ -98,6 +107,7 @@ data class GroupedDeparture(
     val showStopTag: Boolean,
     val times: List<GroupedDepartureTime>,
     val agencyName: String? = null,
+    val hasAlert: Boolean = false,
 )
 
 data class GroupedDepartureTime(
@@ -123,6 +133,7 @@ fun groupDepartures(
                     showStopTag = showStopTag,
                     times = deps.map { GroupedDepartureTime(it.currentMinutes(), it.timeSource) }.sortedBy { it.minutes }.take(maxPerGroup),
                     agencyName = deps.firstOrNull()?.agencyName,
+                    hasAlert = swd.alerts.isNotEmpty(),
                 )
             }
             .sortedBy { it.times.firstOrNull()?.minutes ?: Long.MAX_VALUE }
@@ -134,7 +145,7 @@ suspend fun computeTileState(
     location: LatLon?,
     hasPermission: Boolean,
     thresholdMeters: Int = 1609,
-    fetchDeparturesBatch: suspend (stopIds: List<Long>) -> Map<Long, Pair<List<CachedDeparture>, Long>>,
+    fetchDeparturesBatch: suspend (stopIds: List<Long>) -> Map<Long, CachedStopFetch>,
     persistDepartures: suspend (List<StopWithDepartures>) -> Unit = {},
 ): TileState {
     if (!hasPermission) return TileState.NoPermission
@@ -147,24 +158,28 @@ suspend fun computeTileState(
 
 /** Network fetch + per-stop 60 s cache check + error fallback for a single stop. */
 fun makeFetchNetworkDepartures(
-    getDepartures: suspend (Long) -> List<Departure>,
+    getDepartures: suspend (Long) -> StopDepartures,
     cache: CachedTileData,
     forceFresh: Boolean = false,
-): suspend (Long) -> Pair<List<CachedDeparture>, Long> = { stopId ->
+): suspend (Long) -> CachedStopFetch = { stopId ->
     val now = System.currentTimeMillis()
     val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
     if (!forceFresh && cached != null && now - cached.fetchedAt < CACHE_TTL_MS) {
-        Pair(cached.departures, cached.fetchedAt)
+        CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
     } else {
         runCatching {
-            val deps = getDepartures(stopId)
+            val stopDeps = getDepartures(stopId)
             val fetchTime = System.currentTimeMillis()
-            Pair(deps.map { dep ->
-                CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
-            }, fetchTime)
+            CachedStopFetch(
+                departures = stopDeps.departures.map { dep ->
+                    CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
+                },
+                alerts = stopDeps.alerts,
+                fetchedAt = fetchTime,
+            )
         }.getOrElse { e ->
             if (cached != null && cached.departures.isNotEmpty()) {
-                Pair(cached.departures, cached.fetchedAt)
+                CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
             } else throw e
         }
     }
@@ -172,21 +187,21 @@ fun makeFetchNetworkDepartures(
 
 /** Batch-aware network fetch + per-stop 60 s cache check + error fallback. */
 fun makeFetchNetworkDeparturesBatch(
-    getDeparturesBatch: suspend (List<Long>) -> Map<Long, List<Departure>>,
+    getDeparturesBatch: suspend (List<Long>) -> Map<Long, StopDepartures>,
     cache: CachedTileData,
     forceFresh: Boolean = false,
-): suspend (List<Long>) -> Map<Long, Pair<List<CachedDeparture>, Long>> = { stopIds ->
+): suspend (List<Long>) -> Map<Long, CachedStopFetch> = { stopIds ->
     if (stopIds.isEmpty()) {
         emptyMap()
     } else {
         val now = System.currentTimeMillis()
-        val result = mutableMapOf<Long, Pair<List<CachedDeparture>, Long>>()
+        val result = mutableMapOf<Long, CachedStopFetch>()
 
         val staleStopIds = mutableListOf<Long>()
         for (stopId in stopIds) {
             val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
             if (!forceFresh && cached != null && now - cached.fetchedAt < CACHE_TTL_MS) {
-                result[stopId] = Pair(cached.departures, cached.fetchedAt)
+                result[stopId] = CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
             } else {
                 staleStopIds.add(stopId)
             }
@@ -197,17 +212,21 @@ fun makeFetchNetworkDeparturesBatch(
                 val batchResult = getDeparturesBatch(staleStopIds)
                 val fetchTime = System.currentTimeMillis()
                 for (stopId in staleStopIds) {
-                    val deps = batchResult[stopId] ?: emptyList()
-                    result[stopId] = Pair(deps.map { dep ->
-                        CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
-                    }, fetchTime)
+                    val stopDeps = batchResult[stopId] ?: StopDepartures(stopId, emptyList())
+                    result[stopId] = CachedStopFetch(
+                        departures = stopDeps.departures.map { dep ->
+                            CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
+                        },
+                        alerts = stopDeps.alerts,
+                        fetchedAt = fetchTime,
+                    )
                 }
             }.getOrElse { e ->
                 for (stopId in staleStopIds) {
                     if (stopId !in result) {
                         val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
                         if (cached != null && cached.departures.isNotEmpty()) {
-                            result[stopId] = Pair(cached.departures, cached.fetchedAt)
+                            result[stopId] = CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
                         }
                     }
                 }

@@ -104,6 +104,78 @@ def _haversine_meters(lat1, lon1, lat2, lon2):
     return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+def _resolve_translation(arr):
+    if not arr:
+        return None
+    for item in arr:
+        if item.get("language") == "en" and item.get("text"):
+            return item["text"]
+    for item in arr:
+        if item.get("text"):
+            return item["text"]
+    return None
+
+
+def _alert_is_active(alert, now):
+    periods = alert.get("active_period") or []
+    if not periods:
+        return True
+    for period in periods:
+        start = period.get("start")
+        end = period.get("end")
+        start_ok = (not start) or start <= now
+        end_ok = (not end) or end >= now
+        if start_ok and end_ok:
+            return True
+    return False
+
+
+def _shape_alerts(data, now=None):
+    if now is None:
+        from datetime import datetime, timezone
+        now = int(datetime.now(tz=timezone.utc).timestamp())
+
+    seen = set()
+    alerts = []
+
+    def collect_stop(stop_data):
+        for alert in stop_data.get("alerts") or []:
+            header = _resolve_translation(alert.get("header_text") or [])
+            description = _resolve_translation(alert.get("description_text") or [])
+            cause = alert.get("cause")
+            effect = alert.get("effect")
+            key = (header, description, cause, effect)
+            if key in seen:
+                continue
+            if not _alert_is_active(alert, now):
+                continue
+            seen.add(key)
+            alerts.append({
+                "cause": cause,
+                "effect": effect,
+                "severity_level": alert.get("severity_level"),
+                "header_text": header,
+                "description_text": description,
+                "tts_header_text": _resolve_translation(alert.get("tts_header_text") or []),
+                "tts_description_text": _resolve_translation(alert.get("tts_description_text") or []),
+                "url": _resolve_translation(alert.get("url") or []),
+                "active_period": [
+                    {"start": p.get("start"), "end": p.get("end")}
+                    for p in (alert.get("active_period") or [])
+                ],
+            })
+
+    for stop_data in data.get("stops", []):
+        collect_stop(stop_data)
+        parent = stop_data.get("parent")
+        if parent:
+            collect_stop(parent)
+        for child in stop_data.get("children") or []:
+            collect_stop(child)
+
+    return alerts
+
+
 def _classify_time_source(stt, schedule_relationship):
     estimated_utc = (stt or {}).get("estimated_utc")
     if estimated_utc and schedule_relationship != "STATIC":
@@ -180,9 +252,9 @@ def get_departures(stop_id, next_seconds=7200):
     next_seconds = min(int(next_seconds), 86400)
     data = _upstream_get(
         f"stops/{stop_id}/departures",
-        {"next": next_seconds, "relative_date": "TODAY"},
+        {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
     )
-    return {"departures": _shape_departures(data)}
+    return {"departures": _shape_departures(data), "alerts": _shape_alerts(data)}
 
 
 _BATCH_MAX_STOPS = 6
@@ -194,11 +266,12 @@ def get_departures_batch(stop_ids, next_seconds=7200):
     for stop_id in stop_ids:
         data = _upstream_get(
             f"stops/{stop_id}/departures",
-            {"next": next_seconds, "relative_date": "TODAY"},
+            {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
         )
         stops.append({
             "stop_id": stop_id,
             "departures": _shape_departures(data),
+            "alerts": _shape_alerts(data),
         })
     return {"stops": stops}
 

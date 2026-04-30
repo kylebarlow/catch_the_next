@@ -1,8 +1,8 @@
 package dev.catchthenext.android.storage
 
+import dev.catchthenext.api.StopDepartures
 import dev.catchthenext.api.TransitApi
 import dev.catchthenext.api.TransitlandClient
-import dev.catchthenext.model.Departure
 import dev.catchthenext.model.FeedAttribution
 import dev.catchthenext.model.Stop
 import kotlinx.coroutines.CoroutineScope
@@ -22,15 +22,15 @@ class AttributionRecordingClient(
         return result
     }
 
-    override fun getDepartures(stopId: Long, nextSeconds: Int): List<Departure> {
+    override fun getDepartures(stopId: Long, nextSeconds: Int): StopDepartures {
         val result = delegate.getDepartures(stopId, nextSeconds)
-        recordFeeds(result.mapNotNull { it.feed })
+        recordFeeds(result.departures.mapNotNull { it.feed })
         return result
     }
 
-    override fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int): Map<Long, List<Departure>> {
+    override fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int): Map<Long, StopDepartures> {
         val result = delegate.getDeparturesBatch(stopIds, nextSeconds)
-        recordFeeds(result.values.flatten().mapNotNull { it.feed }.distinctBy { it.feedOnestopId })
+        recordFeeds(result.values.flatMap { it.departures }.mapNotNull { it.feed }.distinctBy { it.feedOnestopId })
         return result
     }
 

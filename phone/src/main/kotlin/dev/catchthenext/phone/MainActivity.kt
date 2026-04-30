@@ -122,7 +122,7 @@ class StopConfirmViewModelFactory(
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
         StopConfirmViewModel(
-            getDepartures = { id -> PhoneGraph.transitlandClient().getDepartures(id) },
+            getDepartures = { id -> PhoneGraph.transitlandClient().getDepartures(id).departures },
             favoritesManager = PhoneGraph.favoritesManager(context),
             stop = stop,
         ) as T

@@ -56,6 +56,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
                                     distanceMeters = 0.0,
                                     departures = cached.departures.filter { it.currentMinutes() >= 0 },
                                     fetchedAt = cached.fetchedAt,
+                                    alerts = cached.alerts ?: emptyList(),
                                 )
                             }
                             if (stops.isEmpty()) null
@@ -94,6 +95,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
             val mgr = PhoneGraph.favoritesManager(context)
             val locationProvider = LocationProvider(context)
             val store = DistanceUnitStore(context)
+            val dataStore = TileDataStore(context)
             FavoritesViewModel(
                 favoritesFlow = mgr.favoritesFlow(),
                 favoritesManager = mgr,
@@ -101,6 +103,10 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
                 highAccuracyLocate = locationProvider.asHighAccuracy(),
                 distanceUnitFlow = store.unitFlow,
                 persistUnit = { store.setUnit(it) },
+                readAlertsByStopId = {
+                    dataStore.read().nearbyDepartures
+                        .associate { it.stopId to (it.alerts?.isNotEmpty() == true) }
+                },
             ) as T
         }
         modelClass.isAssignableFrom(AddStopViewModel::class.java) ->

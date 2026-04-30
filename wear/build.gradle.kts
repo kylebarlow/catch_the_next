@@ -57,6 +57,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.wear.compose.material)
     implementation(libs.wear.compose.foundation)
+    implementation(libs.compose.material.icons)
     implementation(libs.wear.compose.navigation)
     implementation(libs.horologist.compose.layout)
     implementation(libs.horologist.compose.material)

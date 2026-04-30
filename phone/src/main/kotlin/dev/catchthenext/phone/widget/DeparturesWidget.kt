@@ -101,6 +101,7 @@ class DeparturesWidget : GlanceAppWidget() {
                 distanceMeters = haversineMeters(lat, lon, stop.lat, stop.lon),
                 departures = cached.departures.filter { it.currentMinutes() >= 0 },
                 fetchedAt = cached.fetchedAt,
+                alerts = cached.alerts ?: emptyList(),
             )
         }
         return if (stops.isEmpty()) null
@@ -151,14 +152,16 @@ private fun ReadyContent(state: TileState.Ready) {
         return
     }
     groups.forEach { group ->
+        val alertPrefix = if (group.hasAlert) "⚠ " else ""
         val routeLabel = buildString {
+            append(alertPrefix)
             append(group.routeShortName)
             if (group.headsign.isNotBlank()) append(" → ${group.headsign}")
             if (group.showStopTag) append(" · ${group.stopName.take(8)}")
         }
         Text(
             text = routeLabel,
-            style = TextStyle(color = GlanceTheme.colors.onSurface),
+            style = TextStyle(color = if (group.hasAlert) ColorProvider(Color(0xFFFFC107)) else GlanceTheme.colors.onSurface),
             maxLines = 1,
         )
         Row {

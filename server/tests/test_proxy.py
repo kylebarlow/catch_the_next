@@ -558,3 +558,195 @@ def test_shape_departures_is_used_by_get_departures():
     dep = result["departures"][0]
     assert dep["time_source"] == "LIVE"
     assert dep["live_departure_utc"] == "2099-01-01T12:03:00Z"
+
+
+# ── Alert helpers ──────────────────────────────────────────────────────────────
+
+_PAST = 1_000_000      # well before "now" in tests
+_FUTURE = 9_999_999_999
+
+
+def _active_alert(header="Delays", description="Some delays", severity="WARNING",
+                  cause="CONSTRUCTION", effect="REDUCED_SERVICE", periods=None):
+    """Build a minimal Transitland alert dict that is currently active."""
+    return {
+        "cause": cause,
+        "effect": effect,
+        "severity_level": severity,
+        "header_text": [{"language": "en", "text": header}],
+        "description_text": [{"language": "en", "text": description}],
+        "tts_header_text": [],
+        "tts_description_text": [],
+        "url": [],
+        "active_period": periods if periods is not None else [],
+    }
+
+
+def _departures_with_alerts(*alerts, on_parent=False, on_child=False):
+    """Build a DEPARTURES-style response dict with alerts placed on stop/parent/child."""
+    stop_alerts = [] if (on_parent or on_child) else list(alerts)
+    parent_alerts = list(alerts) if on_parent else []
+    child_alerts = list(alerts) if on_child else []
+    return {
+        "stops": [{
+            "departures": [],
+            "alerts": stop_alerts,
+            "parent": {"alerts": parent_alerts} if on_parent else None,
+            "children": [{"alerts": child_alerts}] if on_child else [],
+        }]
+    }
+
+
+# ── include_alerts forwarded ───────────────────────────────────────────────────
+
+def test_get_departures_sends_include_alerts():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE)
+        proxy.get_departures(42, next_seconds=3600)
+        assert "include_alerts=true" in m.last_request.url
+
+
+def test_get_departures_batch_sends_include_alerts():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        proxy.get_departures_batch([10], next_seconds=3600)
+        assert "include_alerts=true" in m.last_request.url
+
+
+# ── alert shaping ──────────────────────────────────────────────────────────────
+
+def test_get_departures_returns_alerts_key():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert "alerts" in result
+
+
+def test_get_departures_returns_active_alert():
+    data = _departures_with_alerts(_active_alert("Track work", periods=[{"start": _PAST, "end": _FUTURE}]))
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert len(result["alerts"]) == 1
+    assert result["alerts"][0]["header_text"] == "Track work"
+    assert result["alerts"][0]["severity_level"] == "WARNING"
+
+
+def test_get_departures_filters_expired_alert():
+    expired = _active_alert(periods=[{"start": _PAST, "end": _PAST}])
+    data = _departures_with_alerts(expired)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert result["alerts"] == []
+
+
+def test_get_departures_filters_future_alert():
+    future_only = _active_alert(periods=[{"start": _FUTURE, "end": _FUTURE}])
+    data = _departures_with_alerts(future_only)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert result["alerts"] == []
+
+
+def test_get_departures_retains_alert_with_no_active_period():
+    no_period = _active_alert(periods=[])
+    data = _departures_with_alerts(no_period)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert len(result["alerts"]) == 1
+
+
+def test_get_departures_collects_alert_from_parent():
+    data = _departures_with_alerts(_active_alert("Parent alert"), on_parent=True)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert any(a["header_text"] == "Parent alert" for a in result["alerts"])
+
+
+def test_get_departures_collects_alert_from_child():
+    data = _departures_with_alerts(_active_alert("Child alert"), on_child=True)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert any(a["header_text"] == "Child alert" for a in result["alerts"])
+
+
+def test_get_departures_deduplicates_alerts_across_stop_and_parent():
+    alert = _active_alert("Duplicate alert")
+    # Same alert on both stop and parent — should only appear once.
+    data = {
+        "stops": [{
+            "departures": [],
+            "alerts": [alert],
+            "parent": {"alerts": [alert]},
+            "children": [],
+        }]
+    }
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert len(result["alerts"]) == 1
+
+
+def test_get_departures_prefers_english_translation():
+    alert = {
+        "cause": None, "effect": None, "severity_level": "INFO",
+        "header_text": [
+            {"language": "es", "text": "Retrasos"},
+            {"language": "en", "text": "Delays"},
+        ],
+        "description_text": [],
+        "tts_header_text": [], "tts_description_text": [], "url": [],
+        "active_period": [],
+    }
+    data = _departures_with_alerts(alert)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert result["alerts"][0]["header_text"] == "Delays"
+
+
+def test_get_departures_falls_back_to_first_non_empty_translation():
+    alert = {
+        "cause": None, "effect": None, "severity_level": "INFO",
+        "header_text": [
+            {"language": "fr", "text": "Retards"},
+        ],
+        "description_text": [],
+        "tts_header_text": [], "tts_description_text": [], "url": [],
+        "active_period": [],
+    }
+    data = _departures_with_alerts(alert)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/42/departures", json=data)
+        result = proxy.get_departures(42, next_seconds=3600)
+    assert result["alerts"][0]["header_text"] == "Retards"
+
+
+# ── batch alert passthrough ────────────────────────────────────────────────────
+
+def test_get_departures_batch_includes_alerts_per_stop():
+    alert = _active_alert("Service change")
+    data_with_alert = _departures_with_alerts(alert)
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/10/departures", json=data_with_alert)
+        m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures_batch([10, 20], next_seconds=3600)
+
+    stop10 = next(s for s in result["stops"] if s["stop_id"] == 10)
+    stop20 = next(s for s in result["stops"] if s["stop_id"] == 20)
+    assert len(stop10["alerts"]) == 1
+    assert stop10["alerts"][0]["header_text"] == "Service change"
+    assert stop20["alerts"] == []
+
+
+def test_get_departures_batch_alerts_key_present_when_no_alerts():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures_batch([10], next_seconds=3600)
+    assert "alerts" in result["stops"][0]
+    assert result["stops"][0]["alerts"] == []

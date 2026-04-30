@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import dev.catchthenext.model.Alert
 import kotlinx.coroutines.flow.first
 
 private val Context.tileDataStore by preferencesDataStore(name = "tile_cache")
@@ -34,6 +35,7 @@ class TileDataStore(private val context: Context) {
                 stopId = swd.stop.id,
                 departures = swd.departures,
                 fetchedAt = swd.fetchedAt,
+                alerts = swd.alerts,
             )
         }
         context.tileDataStore.edit { prefs ->
@@ -60,7 +62,8 @@ class TileDataStore(private val context: Context) {
 data class CachedStopDepartures(
     val stopId: Long,
     val departures: List<CachedDeparture>,
-    val fetchedAt: Long
+    val fetchedAt: Long,
+    val alerts: List<Alert>? = null,
 )
 
 data class CachedTileData(

@@ -105,17 +105,23 @@ private fun showDepartures(client: TransitlandClient, favorites: FavoritesManage
     println("\n  === Next Departures ===")
     for (stop in stops) {
         println("\n  ${stop.stopName}  [ID: ${stop.id}]")
-        val departures = try {
+        val stopDeps = try {
             client.getDepartures(stop.id)
         } catch (e: Exception) {
             println("    Error: ${e.message}")
             continue
         }
 
-        if (departures.isEmpty()) {
+        if (stopDeps.alerts.isNotEmpty()) {
+            stopDeps.alerts.forEach { alert ->
+                println("    ⚠ ${alert.headerText ?: "Service alert"}")
+                alert.descriptionText?.let { println("      $it") }
+            }
+        }
+        if (stopDeps.departures.isEmpty()) {
             println("    No upcoming departures found.")
         } else {
-            departures.take(8).forEach { println(it.displayString()) }
+            stopDeps.departures.take(8).forEach { println(it.displayString()) }
         }
     }
 }
