@@ -86,6 +86,7 @@ DEPARTURES_RESPONSE_WITH_AGENCY = {
                                     "license": {
                                         "spdx_identifier": "CC-BY-4.0",
                                         "attribution_text": "Data from Test Transit",
+                                        "attribution_instructions": "Please credit Test Transit in your app",
                                         "use_without_attribution": "no",
                                         "url": "https://example.com/license",
                                     },
@@ -460,6 +461,7 @@ def test_get_departures_passes_through_agency_and_feed():
     assert dep["feed_onestop_id"] == "f-9q9-testfeed"
     assert dep["feed_name"] == "Test Transit GTFS"
     assert dep["attribution_text"] == "Data from Test Transit"
+    assert dep["attribution_instructions"] == "Please credit Test Transit in your app"
     assert dep["use_without_attribution"] is False
     assert dep["license_spdx"] == "CC-BY-4.0"
     assert dep["time_source"] == "SCHEDULED"

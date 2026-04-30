@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 class WearApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        WearGraph.init(this)
         DepartureWorker.configure(
             getClient = { WearGraph.transitlandClient() },
             getFavorites = { ctx -> WearGraph.favoritesManager(ctx) },

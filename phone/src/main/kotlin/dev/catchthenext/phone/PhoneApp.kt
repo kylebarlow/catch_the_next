@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 class PhoneApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        PhoneGraph.init(this)
         DepartureWorker.configure(
             getClient = { PhoneGraph.transitlandClient() },
             getFavorites = { ctx -> PhoneGraph.favoritesManager(ctx) },

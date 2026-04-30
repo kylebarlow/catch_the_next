@@ -21,7 +21,6 @@ import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.tiles.SuspendingTileService
 import dev.catchthenext.android.location.LatLon
 import dev.catchthenext.android.location.LocationProvider
-import dev.catchthenext.android.storage.AttributionStore
 import dev.catchthenext.android.storage.DistanceUnitStore
 import dev.catchthenext.android.tile.CachedTileData
 import dev.catchthenext.android.tile.DepartureWorker
@@ -77,15 +76,6 @@ class ClosestStopTileService : SuspendingTileService() {
                 fetchDeparturesBatch = makeFetchNetworkDeparturesBatch({ client.getDeparturesBatch(it) }, cache),
                 persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
             )
-        }
-
-        if (state is TileState.Ready) {
-            withContext(Dispatchers.IO) {
-                val feeds = state.stops.mapNotNull { it.stop.feed }
-                if (feeds.isNotEmpty()) {
-                    AttributionStore(this@ClosestStopTileService).recordSeen(feeds)
-                }
-            }
         }
 
         return TileBuilders.Tile.Builder()

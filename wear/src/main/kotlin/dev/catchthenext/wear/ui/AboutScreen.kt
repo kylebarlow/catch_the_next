@@ -20,10 +20,19 @@ import dev.catchthenext.wear.BuildConfig
 @Composable
 fun AboutScreen(viewModel: AboutViewModel) {
     val attributions by viewModel.attributions.collectAsState()
+    val unattributedFeeds by viewModel.unattributedFeeds.collectAsState()
     val context = LocalContext.current
 
     val creditedFeeds = attributions.filter {
         !it.useWithoutAttribution || !it.attributionText.isNullOrBlank()
+    }
+
+    fun openUrl(url: String) {
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
     }
 
     ScalingLazyColumn(
@@ -40,14 +49,7 @@ fun AboutScreen(viewModel: AboutViewModel) {
         item { Text("Transit data via Transitland") }
         item {
             Chip(
-                onClick = {
-                    runCatching {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.transit.land/terms"))
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    }
-                },
+                onClick = { openUrl("https://www.transit.land/terms") },
                 label = { Text("transit.land/terms") },
                 secondaryLabel = { Text("Terms & attribution") },
                 colors = ChipDefaults.secondaryChipColors(),
@@ -58,11 +60,36 @@ fun AboutScreen(viewModel: AboutViewModel) {
             item { Text("Feed credits") }
             items(creditedFeeds.toList()) { feed ->
                 val label = feed.feedName ?: feed.feedOnestopId
-                val detail = buildString {
-                    feed.attributionText?.let { append(it) }
-                    feed.licenseSpdx?.let { if (isNotEmpty()) append(" · "); append(it) }
+                val feedPageUrl = "https://www.transit.land/feeds/${feed.feedOnestopId}"
+                Chip(
+                    onClick = { openUrl(feedPageUrl) },
+                    label = { Text(label) },
+                    secondaryLabel = feed.attributionText?.takeIf { it.isNotBlank() }?.let {
+                        { Text(it) }
+                    },
+                    colors = ChipDefaults.secondaryChipColors(),
+                )
+                feed.attributionInstructions?.takeIf { it.isNotBlank() }?.let {
+                    Text(it)
                 }
-                Text("$label${if (detail.isNotBlank()) ": $detail" else ""}")
+                feed.licenseSpdx?.takeIf { it.isNotBlank() }?.let {
+                    Text(it)
+                }
+                feed.licenseUrl?.let { url ->
+                    Chip(
+                        onClick = { openUrl(url) },
+                        label = { Text("License") },
+                        secondaryLabel = { Text(label) },
+                        colors = ChipDefaults.secondaryChipColors(),
+                    )
+                }
+            }
+        }
+
+        if (BuildConfig.DEBUG && unattributedFeeds.isNotEmpty()) {
+            item { Text("Missing attribution") }
+            items(unattributedFeeds.toList()) { feed ->
+                Text(feed.feedName ?: feed.feedOnestopId)
             }
         }
 

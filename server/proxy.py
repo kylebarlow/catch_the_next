@@ -161,6 +161,7 @@ def _shape_departures(data):
                 "feed_onestop_id": route_feed.get("onestop_id"),
                 "feed_name": route_feed.get("name"),
                 "attribution_text": route_license.get("attribution_text"),
+                "attribution_instructions": route_license.get("attribution_instructions"),
                 "use_without_attribution": use_without in ("yes", True, "true"),
                 "license_spdx": route_license.get("spdx_identifier"),
                 "license_url": route_license.get("url"),

@@ -9,6 +9,7 @@ import com.google.gson.reflect.TypeToken
 import dev.catchthenext.model.FeedAttribution
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 private val Context.attributionDataStore by preferencesDataStore(name = "attributions")
 
@@ -21,6 +22,11 @@ class AttributionStore(private val context: Context) {
         val type = object : TypeToken<Set<FeedAttribution>>() {}.type
         runCatching { gson.fromJson<Set<FeedAttribution>>(json, type) }.getOrNull() ?: emptySet()
     }
+
+    // Feeds where attribution is required (use_without_attribution=false) but no text or instructions were provided.
+    val unattributedFeedsFlow: Flow<Set<FeedAttribution>> = attributionsFlow.map { feeds ->
+        feeds.filter { !it.useWithoutAttribution && it.attributionText.isNullOrBlank() && it.attributionInstructions.isNullOrBlank() }.toSet()
+    }.distinctUntilChanged()
 
     suspend fun recordSeen(feeds: List<FeedAttribution>) {
         if (feeds.isEmpty()) return

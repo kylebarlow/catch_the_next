@@ -18,7 +18,8 @@ data class CachedDeparture(
     val routeShortName: String,
     val headsign: String,
     val departureEpochMillis: Long,
-    val timeSource: DepartureTimeSource
+    val timeSource: DepartureTimeSource,
+    val agencyName: String? = null,
 ) {
     fun currentMinutes(): Long = (departureEpochMillis - System.currentTimeMillis()) / 60_000
 }
@@ -96,6 +97,7 @@ data class GroupedDeparture(
     val stopName: String,
     val showStopTag: Boolean,
     val times: List<GroupedDepartureTime>,
+    val agencyName: String? = null,
 )
 
 data class GroupedDepartureTime(
@@ -120,6 +122,7 @@ fun groupDepartures(
                     stopName = swd.stop.stopName,
                     showStopTag = showStopTag,
                     times = deps.map { GroupedDepartureTime(it.currentMinutes(), it.timeSource) }.sortedBy { it.minutes }.take(maxPerGroup),
+                    agencyName = deps.firstOrNull()?.agencyName,
                 )
             }
             .sortedBy { it.times.firstOrNull()?.minutes ?: Long.MAX_VALUE }
@@ -157,7 +160,7 @@ fun makeFetchNetworkDepartures(
             val deps = getDepartures(stopId)
             val fetchTime = System.currentTimeMillis()
             Pair(deps.map { dep ->
-                CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource)
+                CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
             }, fetchTime)
         }.getOrElse { e ->
             if (cached != null && cached.departures.isNotEmpty()) {
@@ -196,7 +199,7 @@ fun makeFetchNetworkDeparturesBatch(
                 for (stopId in staleStopIds) {
                     val deps = batchResult[stopId] ?: emptyList()
                     result[stopId] = Pair(deps.map { dep ->
-                        CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource)
+                        CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
                     }, fetchTime)
                 }
             }.getOrElse { e ->

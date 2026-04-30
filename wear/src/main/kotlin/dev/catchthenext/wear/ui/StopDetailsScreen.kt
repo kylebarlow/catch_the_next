@@ -12,6 +12,7 @@ import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material.Chip
+import androidx.wear.compose.material.ChipDefaults
 import androidx.wear.compose.material.CircularProgressIndicator
 import androidx.wear.compose.material.Text
 import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
@@ -32,30 +33,52 @@ fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewMo
         is DetailsUi.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(state.msg)
         }
-        is DetailsUi.Loaded -> ScalingLazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = ScalingLazyColumnDefaults.padding(
-                first = ScalingLazyColumnDefaults.ItemType.Text,
-                last = ScalingLazyColumnDefaults.ItemType.Text
-            )()
-        ) {
-            item { Text(state.stop.stopName) }
-            item {
-                Chip(
-                    onClick = {
-                        viewModel.toggleFavorite()
-                        if (state.isFavorite) navController.popBackStack()
-                    },
-                    label = {
-                        Text(if (state.isFavorite) "Remove favorite" else "Add favorite")
+        is DetailsUi.Loaded -> {
+            val feedNames = (listOfNotNull(state.stop.feed) + state.departures.mapNotNull { it.feed })
+                .distinctBy { it.feedOnestopId }
+                .mapNotNull { it.feedName ?: it.feedOnestopId }
+            ScalingLazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = ScalingLazyColumnDefaults.padding(
+                    first = ScalingLazyColumnDefaults.ItemType.Text,
+                    last = ScalingLazyColumnDefaults.ItemType.Text
+                )()
+            ) {
+                item { Text(state.stop.stopName) }
+                item {
+                    Chip(
+                        onClick = {
+                            viewModel.toggleFavorite()
+                            if (state.isFavorite) navController.popBackStack()
+                        },
+                        label = {
+                            Text(if (state.isFavorite) "Remove favorite" else "Add favorite")
+                        }
+                    )
+                }
+                if (state.departures.isEmpty()) {
+                    item { Text("No upcoming departures") }
+                } else {
+                    val multiAgency = state.departures.mapNotNull { it.agencyName }.toSet().size > 1
+                    items(state.departures) { departure ->
+                        if (multiAgency && departure.agencyName != null) {
+                            Text("${departure.displayString()} · ${departure.agencyName}")
+                        } else {
+                            Text(departure.displayString())
+                        }
                     }
-                )
-            }
-            if (state.departures.isEmpty()) {
-                item { Text("No upcoming departures") }
-            } else {
-                items(state.departures) { departure ->
-                    Text(departure.displayString())
+                }
+                if (feedNames.isNotEmpty()) {
+                    item {
+                        Chip(
+                            onClick = { navController.navigate("about") },
+                            label = { Text("Data sources") },
+                            secondaryLabel = {
+                                Text(if (feedNames.size == 1) feedNames.first() else "Multiple feeds")
+                            },
+                            colors = ChipDefaults.secondaryChipColors(),
+                        )
+                    }
                 }
             }
         }

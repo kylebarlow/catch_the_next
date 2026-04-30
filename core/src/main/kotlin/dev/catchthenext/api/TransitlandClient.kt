@@ -16,7 +16,7 @@ class TransitlandClient(
     private val apiKey: String,
     private val baseUrl: String = "http://localhost:39217/api/v2/rest",
     private val userAgent: String = "CatchTheNext/1.0 (Android; +https://codeberg.org/ursidaureus/catch_the_next)",
-) {
+) : TransitApi {
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -30,7 +30,7 @@ class TransitlandClient(
 
     private val gson = Gson()
 
-    fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int = 600, limit: Int = 20): List<Stop> {
+    override fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int, limit: Int): List<Stop> {
         val url = "$baseUrl/stops".toHttpUrl().newBuilder()
             .addQueryParameter("lat", lat.toString())
             .addQueryParameter("lon", lon.toString())
@@ -43,7 +43,7 @@ class TransitlandClient(
         return response.stops.mapNotNull { it.toStop(fallbackLat = lat, fallbackLon = lon) }
     }
 
-    fun getDepartures(stopId: Long, nextSeconds: Int = 7200): List<Departure> {
+    override fun getDepartures(stopId: Long, nextSeconds: Int): List<Departure> {
         val url = "$baseUrl/stops/$stopId/departures".toHttpUrl().newBuilder()
             .addQueryParameter("next", nextSeconds.toString())
             .addQueryParameter("relative_date", "TODAY")
@@ -56,7 +56,7 @@ class TransitlandClient(
             .sortedBy { it.displayDepartureMinutes }
     }
 
-    fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int = 7200): Map<Long, List<Departure>> {
+    override fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int): Map<Long, List<Departure>> {
         if (stopIds.isEmpty()) return emptyMap()
         val url = "$baseUrl/departures".toHttpUrl().newBuilder()
             .addQueryParameter("stop_ids", stopIds.joinToString(","))

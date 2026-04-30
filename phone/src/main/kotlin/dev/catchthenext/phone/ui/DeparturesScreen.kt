@@ -139,6 +139,7 @@ private fun ReadyContent(state: TileState.Ready) {
         stops = state.stops,
         filter = { it.currentMinutes() in 0..59 },
     )
+    val multiAgency = groups.mapNotNull { it.agencyName }.toSet().size > 1
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -146,7 +147,7 @@ private fun ReadyContent(state: TileState.Ready) {
         if (groups.isEmpty()) {
             item { Text("No departures in the next hour") }
         } else {
-            items(groups) { group -> DepartureCard(group) }
+            items(groups) { group -> DepartureCard(group, multiAgency) }
         }
         item {
             Text(
@@ -160,7 +161,7 @@ private fun ReadyContent(state: TileState.Ready) {
 }
 
 @Composable
-private fun DepartureCard(group: GroupedDeparture) {
+private fun DepartureCard(group: GroupedDeparture, showAgency: Boolean = false) {
     val routeLabel = buildString {
         append(group.routeShortName)
         if (group.headsign.isNotBlank()) append(" → ${group.headsign}")
@@ -169,6 +170,15 @@ private fun DepartureCard(group: GroupedDeparture) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Text(routeLabel, style = MaterialTheme.typography.bodyMedium)
+            if (showAgency) {
+                group.agencyName?.let { agency ->
+                    Text(
+                        text = agency,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 group.times.forEach { time ->
                     Text(

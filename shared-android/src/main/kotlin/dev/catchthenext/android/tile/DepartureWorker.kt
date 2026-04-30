@@ -8,7 +8,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import dev.catchthenext.android.location.LatLon
 import dev.catchthenext.android.storage.DistanceUnitStore
-import dev.catchthenext.api.TransitlandClient
+import dev.catchthenext.api.TransitApi
 import dev.catchthenext.storage.FavoritesManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -58,11 +58,11 @@ class DepartureWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
     companion object {
         private const val WORK_NAME = "departure_refresh"
 
-        @Volatile private var clientProvider: (() -> TransitlandClient)? = null
+        @Volatile private var clientProvider: (() -> TransitApi)? = null
         @Volatile private var favoritesFactory: ((Context) -> FavoritesManager)? = null
 
         fun configure(
-            getClient: () -> TransitlandClient,
+            getClient: () -> TransitApi,
             getFavorites: (Context) -> FavoritesManager,
         ) {
             clientProvider = getClient

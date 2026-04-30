@@ -2,6 +2,8 @@ package dev.catchthenext.phone.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,10 +34,19 @@ import dev.catchthenext.phone.BuildConfig
 @Composable
 fun AboutScreen(viewModel: AboutViewModel, navController: NavController? = null) {
     val attributions by viewModel.attributions.collectAsState()
+    val unattributedFeeds by viewModel.unattributedFeeds.collectAsState()
     val context = LocalContext.current
 
     val creditedFeeds = attributions.filter {
         !it.useWithoutAttribution || !it.attributionText.isNullOrBlank()
+    }
+
+    fun openUrl(url: String) {
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
     }
 
     Scaffold(
@@ -64,14 +75,9 @@ fun AboutScreen(viewModel: AboutViewModel, navController: NavController? = null)
                     headlineContent = { Text("Transit data") },
                     supportingContent = { Text("Via Transitland") },
                     trailingContent = {
-                        TextButton(onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse("https://www.transit.land/terms"))
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                )
-                            }
-                        }) { Text("transit.land/terms") }
+                        TextButton(onClick = { openUrl("https://www.transit.land/terms") }) {
+                            Text("transit.land/terms")
+                        }
                     }
                 )
                 HorizontalDivider()
@@ -87,16 +93,51 @@ fun AboutScreen(viewModel: AboutViewModel, navController: NavController? = null)
                 }
                 items(creditedFeeds.toList()) { feed ->
                     val label = feed.feedName ?: feed.feedOnestopId
-                    val detail = buildString {
-                        feed.attributionText?.let { append(it) }
-                        feed.licenseSpdx?.let { if (isNotEmpty()) append(" · "); append(it) }
-                    }
+                    val feedPageUrl = "https://www.transit.land/feeds/${feed.feedOnestopId}"
                     ListItem(
+                        modifier = Modifier.clickable { openUrl(feedPageUrl) },
                         headlineContent = { Text(label) },
-                        supportingContent = if (detail.isNotBlank()) ({ Text(detail) }) else null,
+                        supportingContent = {
+                            Column {
+                                feed.attributionText?.takeIf { it.isNotBlank() }?.let {
+                                    Text(it)
+                                }
+                                feed.attributionInstructions?.takeIf { it.isNotBlank() }?.let {
+                                    Text(
+                                        text = it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                feed.licenseSpdx?.takeIf { it.isNotBlank() }?.let {
+                                    Text(text = it, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        },
+                        trailingContent = feed.licenseUrl?.let { url ->
+                            { TextButton(onClick = { openUrl(url) }) { Text("License") } }
+                        },
                     )
                     HorizontalDivider()
                 }
+            }
+
+            if (BuildConfig.DEBUG && unattributedFeeds.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Feeds missing attribution metadata",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp),
+                    )
+                }
+                items(unattributedFeeds.toList()) { feed ->
+                    ListItem(
+                        headlineContent = { Text(feed.feedName ?: feed.feedOnestopId) },
+                        supportingContent = { Text("use_without_attribution=false but no attribution text/instructions received") },
+                    )
+                }
+                item { HorizontalDivider() }
             }
 
             item {

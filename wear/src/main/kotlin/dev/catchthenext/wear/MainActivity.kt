@@ -214,10 +214,13 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                 persistThreshold = { store.setThresholdMeters(it) },
             ) as T
         }
-        modelClass.isAssignableFrom(AboutViewModel::class.java) ->
+        modelClass.isAssignableFrom(AboutViewModel::class.java) -> {
+            val attrStore = AttributionStore(context)
             AboutViewModel(
-                attributionsFlow = AttributionStore(context).attributionsFlow,
+                attributionsFlow = attrStore.attributionsFlow,
+                unattributedFeedsFlow = attrStore.unattributedFeedsFlow,
             ) as T
+        }
         else -> throw IllegalArgumentException("Unknown ViewModel: $modelClass")
     }
 }
