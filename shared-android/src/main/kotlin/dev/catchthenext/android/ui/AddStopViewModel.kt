@@ -21,7 +21,7 @@ sealed interface AddStopUi {
 }
 
 class AddStopViewModel(
-    private val getNearbyStops: suspend (Double, Double) -> List<Stop>,
+    private val getNearbyStops: suspend (Double, Double, Int) -> List<Stop>,
     private val favoritesManager: FavoritesManager,
     private val locationProvider: CurrentLocationProvider,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -37,11 +37,22 @@ class AddStopViewModel(
                 _ui.value = AddStopUi.Error("Could not get location")
                 return@launch
             }
-            _ui.value = runCatching {
-                val stops = getNearbyStops(latLon.lat, latLon.lon)
-                if (stops.isEmpty()) AddStopUi.Empty else AddStopUi.Loaded(stops)
-            }.getOrElse { AddStopUi.Error(it.message ?: "Network error") }
+            loadStopsAt(latLon, radiusMeters = 600)
         }
+    }
+
+    fun loadFor(latLon: LatLon, radiusMeters: Int = 1500) {
+        _ui.value = AddStopUi.Locating
+        viewModelScope.launch(ioDispatcher) {
+            loadStopsAt(latLon, radiusMeters)
+        }
+    }
+
+    private suspend fun loadStopsAt(latLon: LatLon, radiusMeters: Int) {
+        _ui.value = runCatching {
+            val stops = getNearbyStops(latLon.lat, latLon.lon, radiusMeters)
+            if (stops.isEmpty()) AddStopUi.Empty else AddStopUi.Loaded(stops)
+        }.getOrElse { AddStopUi.Error(it.message ?: "Network error") }
     }
 
     fun addStop(stop: Stop) {

@@ -4,6 +4,7 @@ import dev.catchthenext.api.StopDepartures
 import dev.catchthenext.api.TransitApi
 import dev.catchthenext.api.TransitlandClient
 import dev.catchthenext.model.FeedAttribution
+import dev.catchthenext.model.Place
 import dev.catchthenext.model.Stop
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,9 @@ class AttributionRecordingClient(
         recordFeeds(result.values.flatMap { it.departures }.mapNotNull { it.feed }.distinctBy { it.feedOnestopId })
         return result
     }
+
+    override fun geocodePlace(query: String, focusLat: Double?, focusLon: Double?, limit: Int): List<Place> =
+        delegate.geocodePlace(query, focusLat, focusLon, limit)
 
     private fun recordFeeds(feeds: List<FeedAttribution>) {
         if (feeds.isEmpty()) return

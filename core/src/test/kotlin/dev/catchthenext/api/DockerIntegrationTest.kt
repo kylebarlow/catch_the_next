@@ -88,7 +88,7 @@ class DockerIntegrationTest {
     @Test
     fun `departures API returns departures for Caltrain 4th and King through docker`() {
         val client = TransitlandClient(apiKey, baseUrl)
-        val departures = client.getDepartures(caltrainStopId)
+        val departures = client.getDepartures(caltrainStopId).departures
 
         println("\n[Docker] Departures for Caltrain 4th & King (ID: $caltrainStopId):")
         departures.forEach { d ->
@@ -107,7 +107,7 @@ class DockerIntegrationTest {
     fun `departures API handles child platform stop with null children field`() {
         // Platform stops return "children": null from Transitland, which previously caused a 500.
         val client = TransitlandClient(apiKey, baseUrl)
-        val departures = client.getDepartures(caltrainSouthboundPlatformId)
+        val departures = client.getDepartures(caltrainSouthboundPlatformId).departures
 
         println("\n[Docker] Departures for Caltrain Southbound platform (ID: $caltrainSouthboundPlatformId):")
         departures.forEach { d ->

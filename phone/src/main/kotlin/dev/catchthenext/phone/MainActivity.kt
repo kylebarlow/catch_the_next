@@ -22,6 +22,7 @@ import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.android.ui.FavoritesViewModel
+import dev.catchthenext.android.ui.PlaceSearchViewModel
 import dev.catchthenext.android.ui.SettingsViewModel
 import dev.catchthenext.android.ui.StopConfirmViewModel
 import dev.catchthenext.android.ui.StopDetailsViewModel
@@ -73,7 +74,12 @@ private fun PhoneNavGraph(navController: NavHostController, factory: PhoneViewMo
         }
         composable("add") {
             val vm: AddStopViewModel = viewModel(factory = factory)
-            AddStopScreen(navController = navController, viewModel = vm)
+            val placeSearchVm: PlaceSearchViewModel = viewModel(factory = factory)
+            AddStopScreen(
+                navController = navController,
+                viewModel = vm,
+                placeSearchViewModel = placeSearchVm,
+            )
         }
         composable("details/{stopId}") { backStackEntry ->
             val stopId = backStackEntry.arguments?.getString("stopId")?.toLongOrNull() ?: 0L

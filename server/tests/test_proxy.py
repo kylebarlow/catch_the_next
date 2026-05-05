@@ -4,6 +4,7 @@ os.environ.setdefault("APP_API_KEYS", "app-key")
 os.environ.setdefault("TRANSITLAND_BASE_URL", "http://mock-transitland")
 
 import json
+import time
 import pytest
 import requests_mock as req_mock
 import proxy
@@ -136,7 +137,7 @@ def test_get_stops_clamps_radius():
         sent_params = dict(pair.split("=") for pair in
                            m.last_request.url.split("?")[1].split("&"))
 
-    assert int(sent_params["radius"]) <= 2000
+    assert int(sent_params["radius"]) <= 5000
 
 
 # Regression: at Duboce Park (37.76955, -122.4332) the upstream API sorts stops
@@ -750,3 +751,145 @@ def test_get_departures_batch_alerts_key_present_when_no_alerts():
         result = proxy.get_departures_batch([10], next_seconds=3600)
     assert "alerts" in result["stops"][0]
     assert result["stops"][0]["alerts"] == []
+
+
+# ── geocode ────────────────────────────────────────────────────────────────────
+
+_NOMINATIM_URL = f"{proxy._NOMINATIM_BASE_URL}/search"
+
+NOMINATIM_RESPONSE = [
+    {
+        "place_id": 123456,
+        "display_name": "Berkeley, Alameda County, California, United States",
+        "lat": "37.8708393",
+        "lon": "-122.272863",
+        "category": "boundary",
+        "type": "administrative",
+        "importance": 0.8,
+    }
+]
+
+
+def test_geocode_returns_shaped_places():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=NOMINATIM_RESPONSE)
+        result = proxy.geocode("Berkeley CA")
+
+    assert "places" in result
+    place = result["places"][0]
+    assert place["place_id"] == "123456"
+    assert place["display_name"] == "Berkeley, Alameda County, California, United States"
+    assert place["lat"] == pytest.approx(37.8708393)
+    assert place["lon"] == pytest.approx(-122.272863)
+    assert place["category"] == "boundary"
+    assert place["type"] == "administrative"
+
+
+def test_geocode_returns_empty_list_on_no_results():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=[])
+        result = proxy.geocode("xyzzy-nonexistent-place-99999")
+
+    assert result == {"places": []}
+
+
+def test_geocode_limit_capped_at_10():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=[])
+        proxy.geocode("Berkeley", limit=999)
+        sent_url = m.last_request.url
+
+    assert "limit=10" in sent_url
+
+
+def test_geocode_uses_jsonv2_format():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=[])
+        proxy.geocode("Berkeley")
+        sent_url = m.last_request.url
+
+    assert "format=jsonv2" in sent_url
+
+
+def test_geocode_focus_viewbox_forwarded():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=[])
+        proxy.geocode("station", focus_lat=37.8, focus_lon=-122.3)
+        sent_url = m.last_request.url
+
+    assert "viewbox=" in sent_url
+    assert "bounded=0" in sent_url
+
+
+def test_geocode_no_viewbox_without_focus():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=[])
+        proxy.geocode("station")
+        sent_url = m.last_request.url
+
+    assert "viewbox" not in sent_url
+
+
+def test_geocode_accept_language_forwarded():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=[])
+        proxy.geocode("station", accept_language="es")
+        sent_headers = m.last_request.headers
+
+    assert sent_headers.get("Accept-Language") == "es"
+
+
+def test_geocode_unique_user_agent_sent():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=[])
+        proxy.geocode("Berkeley")
+        ua = m.last_request.headers.get("User-Agent", "")
+
+    assert "CatchTheNext" in ua
+
+
+def test_geocode_upstream_500_raises_502():
+    import bottle
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, status_code=500)
+        with pytest.raises(bottle.HTTPResponse) as exc:
+            proxy.geocode("Berkeley")
+    assert exc.value.status_code == 502
+
+
+def test_geocode_upstream_timeout_raises_504():
+    import bottle
+    import requests.exceptions
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, exc=requests.exceptions.Timeout)
+        with pytest.raises(bottle.HTTPResponse) as exc:
+            proxy.geocode("Berkeley")
+    assert exc.value.status_code == 504
+
+
+def test_geocode_does_not_leak_upstream_key():
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=NOMINATIM_RESPONSE)
+        result = proxy.geocode("Berkeley")
+
+    assert "real-upstream-key" not in json.dumps(result)
+
+
+def test_geocode_outbound_rate_limited_to_1rps(monkeypatch):
+    proxy._nominatim_last_call = time.monotonic()
+    sleeps = []
+    monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+    with req_mock.Mocker() as m:
+        m.get(_NOMINATIM_URL, json=[])
+        proxy.geocode("Berkeley")
+    assert any(s > 0 for s in sleeps), "expected throttle sleep when called within 1 s of prior call"
+
+
+def test_get_stops_radius_capped_at_5000():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+        proxy.get_stops(37.8, -122.4, radius=99999)
+        sent_params = dict(pair.split("=") for pair in
+                           m.last_request.url.split("?")[1].split("&"))
+
+    assert int(sent_params["radius"]) <= 5000

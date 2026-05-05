@@ -17,10 +17,12 @@ import dev.catchthenext.android.tile.TileDataStore
 import dev.catchthenext.android.tile.TileState
 import dev.catchthenext.android.tile.computeTileState
 import dev.catchthenext.android.tile.makeFetchNetworkDeparturesBatch
+import dev.catchthenext.android.location.LocationCache
 import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.android.ui.FavoritesViewModel
+import dev.catchthenext.android.ui.PlaceSearchViewModel
 import dev.catchthenext.android.ui.SettingsViewModel
 import kotlinx.coroutines.flow.first
 
@@ -111,9 +113,16 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
         }
         modelClass.isAssignableFrom(AddStopViewModel::class.java) ->
             AddStopViewModel(
-                getNearbyStops = { lat, lon -> PhoneGraph.transitlandClient().getNearbyStops(lat, lon) },
+                getNearbyStops = { lat, lon, r -> PhoneGraph.transitlandClient().getNearbyStops(lat, lon, r) },
                 favoritesManager = PhoneGraph.favoritesManager(context),
                 locationProvider = LocationProvider(context),
+            ) as T
+        modelClass.isAssignableFrom(PlaceSearchViewModel::class.java) ->
+            PlaceSearchViewModel(
+                geocode = { q, focusLat, focusLon ->
+                    PhoneGraph.transitlandClient().geocodePlace(q, focusLat, focusLon)
+                },
+                focus = { LocationCache.get() },
             ) as T
         modelClass.isAssignableFrom(SettingsViewModel::class.java) -> {
             val store = DistanceUnitStore(context)

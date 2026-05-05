@@ -8,6 +8,7 @@ import dev.catchthenext.model.AlertSeverity
 import dev.catchthenext.model.Departure
 import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.FeedAttribution
+import dev.catchthenext.model.Place
 import dev.catchthenext.model.Stop
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -61,6 +62,20 @@ class TransitlandClient(
         return StopDepartures(stopId, departures, alerts)
     }
 
+    override fun geocodePlace(query: String, focusLat: Double?, focusLon: Double?, limit: Int): List<Place> {
+        val urlBuilder = "$baseUrl/geocode".toHttpUrl().newBuilder()
+            .addQueryParameter("q", query)
+            .addQueryParameter("limit", limit.toString())
+        if (focusLat != null && focusLon != null) {
+            urlBuilder
+                .addQueryParameter("focus_lat", focusLat.toString())
+                .addQueryParameter("focus_lon", focusLon.toString())
+        }
+        val body = executeGet(urlBuilder.build().toString())
+        val response = gson.fromJson(body, PlacesResponse::class.java)
+        return response.places.map { it.toPlace() }
+    }
+
     override fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int): Map<Long, StopDepartures> {
         if (stopIds.isEmpty()) return emptyMap()
         val url = "$baseUrl/departures".toHttpUrl().newBuilder()
@@ -89,6 +104,26 @@ class TransitlandClient(
     }
 
     // ── JSON deserialization types ──────────────────────────────────────────
+
+    private data class PlacesResponse(val places: List<PlaceJson> = emptyList())
+
+    private data class PlaceJson(
+        @SerializedName("place_id") val placeId: String? = null,
+        @SerializedName("display_name") val displayName: String? = null,
+        val lat: Double? = null,
+        val lon: Double? = null,
+        val category: String? = null,
+        val type: String? = null,
+    ) {
+        fun toPlace() = Place(
+            placeId = placeId ?: "",
+            displayName = displayName ?: "",
+            lat = lat ?: 0.0,
+            lon = lon ?: 0.0,
+            category = category,
+            type = type,
+        )
+    }
 
     private data class StopsResponse(val stops: List<StopJson> = emptyList())
 

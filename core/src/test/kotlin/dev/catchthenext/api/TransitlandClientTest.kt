@@ -1,8 +1,83 @@
 package dev.catchthenext.api
 
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+
+class GeocodePlaceTest {
+
+    private val PLACES_JSON = """
+        {"places":[
+          {"place_id":"123456","display_name":"Berkeley, CA","lat":37.87,"lon":-122.27,
+           "category":"boundary","type":"administrative"}
+        ]}
+    """.trimIndent()
+
+    @Test
+    fun `geocodePlace returns parsed places`() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody(PLACES_JSON).setResponseCode(200))
+        server.start()
+        val client = TransitlandClient("test-key", server.url("/api/v2/rest").toString())
+
+        val places = client.geocodePlace("Berkeley CA")
+
+        assertEquals(1, places.size)
+        val place = places[0]
+        assertEquals("123456", place.placeId)
+        assertEquals("Berkeley, CA", place.displayName)
+        assertEquals(37.87, place.lat, 0.001)
+        assertEquals(-122.27, place.lon, 0.001)
+        assertEquals("boundary", place.category)
+        assertEquals("administrative", place.type)
+        server.shutdown()
+    }
+
+    @Test
+    fun `geocodePlace handles empty results`() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"places":[]}""").setResponseCode(200))
+        server.start()
+        val client = TransitlandClient("test-key", server.url("/api/v2/rest").toString())
+
+        val places = client.geocodePlace("xyzzy-nonexistent-99999")
+
+        assertTrue(places.isEmpty())
+        server.shutdown()
+    }
+
+    @Test
+    fun `geocodePlace passes focus params in URL`() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"places":[]}""").setResponseCode(200))
+        server.start()
+        val client = TransitlandClient("test-key", server.url("/api/v2/rest").toString())
+
+        client.geocodePlace("station", focusLat = 37.8, focusLon = -122.3)
+
+        val request = server.takeRequest()
+        assertTrue("focus_lat" in request.path!!)
+        assertTrue("focus_lon" in request.path!!)
+        server.shutdown()
+    }
+
+    @Test
+    fun `geocodePlace throws on upstream error`() {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(502))
+        server.start()
+        val client = TransitlandClient("test-key", server.url("/api/v2/rest").toString())
+
+        val result = runCatching { client.geocodePlace("Berkeley") }
+
+        assertTrue(result.isFailure)
+        server.shutdown()
+    }
+}
+
 
 class TransitlandClientTest {
 
@@ -54,7 +129,7 @@ class TransitlandClientTest {
         // Parent station — departures live on child platform stops in the API response.
         val caltrainStopId = 2173133854L
         val client = TransitlandClient(key, baseUrl())
-        val departures = client.getDepartures(caltrainStopId)
+        val departures = client.getDepartures(caltrainStopId).departures
 
         println("\nDepartures for Caltrain 4th & King (ID: $caltrainStopId):")
         departures.forEach { d ->

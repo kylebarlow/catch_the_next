@@ -2,6 +2,7 @@ package dev.catchthenext.api
 
 import dev.catchthenext.model.Alert
 import dev.catchthenext.model.Departure
+import dev.catchthenext.model.Place
 import dev.catchthenext.model.Stop
 
 data class StopDepartures(
@@ -14,4 +15,10 @@ interface TransitApi {
     fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int = 600, limit: Int = 20): List<Stop>
     fun getDepartures(stopId: Long, nextSeconds: Int = 7200): StopDepartures
     fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int = 7200): Map<Long, StopDepartures>
+    fun geocodePlace(
+        query: String,
+        focusLat: Double? = null,
+        focusLon: Double? = null,
+        limit: Int = 10,
+    ): List<Place>
 }

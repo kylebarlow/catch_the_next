@@ -142,6 +142,19 @@ fun AboutScreen(viewModel: AboutViewModel, navController: NavController? = null)
 
             item {
                 ListItem(
+                    headlineContent = { Text("Geocoding") },
+                    supportingContent = { Text("© OpenStreetMap contributors (ODbL). Geocoding by Nominatim / OpenStreetMap.") },
+                    trailingContent = {
+                        TextButton(onClick = { openUrl("https://www.openstreetmap.org/copyright") }) {
+                            Text("OSM copyright")
+                        }
+                    }
+                )
+                HorizontalDivider()
+            }
+
+            item {
+                ListItem(
                     headlineContent = { Text("Open source") },
                     supportingContent = { Text("Kotlin · OkHttp · Gson · Jetpack Compose · Glance") },
                 )

@@ -1,6 +1,8 @@
 import json
 import math
 import sys
+import threading
+import time
 import requests
 import bottle
 from config import load_config
@@ -17,6 +19,24 @@ _session = requests.Session()
 _session.headers.update({
     "User-Agent": f"CatchTheNext-Proxy/{__version__} (+https://codeberg.org/ursidaureus/catch_the_next)"
 })
+
+_NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
+_nominatim_session = requests.Session()
+_nominatim_session.headers.update({
+    "User-Agent": f"CatchTheNext-Proxy/{__version__} (+https://codeberg.org/ursidaureus/catch_the_next)"
+})
+_nominatim_lock = threading.Lock()
+_nominatim_last_call = 0.0
+
+
+def _nominatim_throttle():
+    global _nominatim_last_call
+    with _nominatim_lock:
+        now = time.monotonic()
+        wait = 1.0 - (now - _nominatim_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        _nominatim_last_call = time.monotonic()
 
 
 def _upstream_get(path, params):
@@ -53,8 +73,61 @@ def _upstream_get(path, params):
 _UPSTREAM_STOPS_LIMIT = 100
 
 
+def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=None):
+    limit = min(int(limit), 10)
+    params = {
+        "q": query,
+        "format": "jsonv2",
+        "limit": limit,
+        "addressdetails": 0,
+    }
+    if focus_lat is not None and focus_lon is not None:
+        params["viewbox"] = f"{focus_lon - 0.5},{focus_lat + 0.5},{focus_lon + 0.5},{focus_lat - 0.5}"
+        params["bounded"] = 0
+
+    headers = {}
+    if accept_language:
+        headers["Accept-Language"] = accept_language
+
+    _nominatim_throttle()
+    url = f"{_NOMINATIM_BASE_URL}/search"
+    try:
+        resp = _nominatim_session.get(url, params=params, headers=headers,
+                                      timeout=(_connect_timeout, _read_timeout))
+    except requests.Timeout:
+        raise bottle.HTTPResponse(
+            body='{"error":"upstream_timeout"}', status=504,
+            headers={"Content-Type": "application/json"},
+        )
+    except requests.RequestException as e:
+        print(f"nominatim error: {e}", file=sys.stderr)
+        raise bottle.HTTPResponse(
+            body='{"error":"upstream"}', status=502,
+            headers={"Content-Type": "application/json"},
+        )
+
+    if not resp.ok:
+        raise bottle.HTTPResponse(
+            body=json.dumps({"error": "upstream", "status": resp.status_code}),
+            status=502,
+            headers={"Content-Type": "application/json"},
+        )
+
+    places = []
+    for item in resp.json():
+        places.append({
+            "place_id": str(item.get("place_id", "")),
+            "display_name": item.get("display_name", ""),
+            "lat": float(item.get("lat", 0)),
+            "lon": float(item.get("lon", 0)),
+            "category": item.get("category"),
+            "type": item.get("type"),
+        })
+    return {"places": places}
+
+
 def get_stops(lat, lon, radius=500, limit=20):
-    radius = min(int(radius), 2000)
+    radius = min(int(radius), 5000)
     limit = min(int(limit), 50)
     data = _upstream_get("stops", {
         "lat": lat, "lon": lon, "radius": radius, "limit": _UPSTREAM_STOPS_LIMIT,

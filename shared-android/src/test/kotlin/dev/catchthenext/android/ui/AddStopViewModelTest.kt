@@ -33,12 +33,14 @@ class AddStopViewModelTest {
         Dispatchers.resetMain()
     }
 
+    private var lastRadius: Int? = null
+
     private fun makeVm(
         stops: List<Stop> = listOf(stop1, stop2),
         location: LatLon? = fakeLocation,
         manager: FakeFavoritesManager = FakeFavoritesManager(),
     ) = AddStopViewModel(
-        getNearbyStops = { _, _ -> stops },
+        getNearbyStops = { _, _, r -> lastRadius = r; stops },
         favoritesManager = manager,
         locationProvider = { location },
         ioDispatcher = testDispatcher,
@@ -87,7 +89,7 @@ class AddStopViewModelTest {
     @Test
     fun `onPermissionGranted when fetcher throws transitions to Error`() = runTest {
         val vm = AddStopViewModel(
-            getNearbyStops = { _, _ -> throw RuntimeException("network failure") },
+            getNearbyStops = { _, _, _ -> throw RuntimeException("network failure") },
             favoritesManager = FakeFavoritesManager(),
             locationProvider = { fakeLocation },
             ioDispatcher = testDispatcher,
@@ -104,5 +106,42 @@ class AddStopViewModelTest {
         val vm = makeVm(manager = manager)
         vm.addStop(stop1)
         assertTrue(manager.isFavorite(stop1.id))
+    }
+
+    @Test
+    fun `loadFor skips location provider and emits Loaded`() = runTest {
+        val vm = makeVm()
+        vm.loadFor(fakeLocation)
+        val state = vm.ui.value
+        assertTrue(state is AddStopUi.Loaded, "Expected Loaded but got $state")
+        assertEquals(2, (state as AddStopUi.Loaded).stops.size)
+    }
+
+    @Test
+    fun `loadFor forwards custom radius`() = runTest {
+        val vm = makeVm()
+        vm.loadFor(fakeLocation, radiusMeters = 3000)
+        assertEquals(3000, lastRadius)
+    }
+
+    @Test
+    fun `loadFor emits Error on network failure`() = runTest {
+        val vm = AddStopViewModel(
+            getNearbyStops = { _, _, _ -> throw RuntimeException("timeout") },
+            favoritesManager = FakeFavoritesManager(),
+            locationProvider = { fakeLocation },
+            ioDispatcher = testDispatcher,
+        )
+        vm.loadFor(fakeLocation)
+        val state = vm.ui.value
+        assertTrue(state is AddStopUi.Error)
+        assertEquals("timeout", (state as AddStopUi.Error).msg)
+    }
+
+    @Test
+    fun `onPermissionGranted uses 600m radius`() = runTest {
+        val vm = makeVm()
+        vm.onPermissionGranted()
+        assertEquals(600, lastRadius)
     }
 }
