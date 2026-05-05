@@ -258,7 +258,6 @@ def _classify_time_source(stt, schedule_relationship):
 
 def _shape_departures(data):
     departures = []
-    now_minutes = _now_minutes()
 
     def collect(stop_data):
         for dep in stop_data.get("departures") or []:
@@ -270,8 +269,8 @@ def _shape_departures(data):
             gtfs_offset = dep.get("departure_time", "")
             schedule_relationship = dep.get("schedule_relationship", "SCHEDULED")
 
-            sched_minutes = _parse_minutes(scheduled_utc, gtfs_offset, now_minutes)
-            live_minutes = _parse_minutes(estimated_utc, None, now_minutes) if estimated_utc else None
+            sched_minutes = _parse_minutes(scheduled_utc)
+            live_minutes = _parse_minutes(estimated_utc) if estimated_utc else None
 
             time_source = _classify_time_source(stt, schedule_relationship)
 
@@ -349,13 +348,7 @@ def get_departures_batch(stop_ids, next_seconds=7200):
     return {"stops": stops}
 
 
-def _now_minutes():
-    from datetime import datetime, timezone
-    now = datetime.now(tz=timezone.utc)
-    return now.hour * 60 + now.minute
-
-
-def _parse_minutes(scheduled_utc, gtfs_offset, now_minutes):
+def _parse_minutes(scheduled_utc):
     if scheduled_utc:
         try:
             from datetime import datetime, timezone
@@ -363,12 +356,5 @@ def _parse_minutes(scheduled_utc, gtfs_offset, now_minutes):
             now = datetime.now(tz=timezone.utc)
             return int((dt - now).total_seconds() // 60)
         except (ValueError, TypeError):
-            pass
-    if gtfs_offset:
-        try:
-            parts = gtfs_offset.split(":")
-            total = int(parts[0]) * 60 + int(parts[1])
-            return total - now_minutes
-        except (ValueError, IndexError):
             pass
     return None

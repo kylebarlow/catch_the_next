@@ -243,6 +243,7 @@ def test_get_departures_handles_null_departure_and_children():
         m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_NULL_FIELDS)
         result = proxy.get_departures(42, next_seconds=3600)
     assert "departures" in result
+    assert result["departures"] == []
 
 
 def test_get_departures_returns_sorted():
@@ -388,7 +389,10 @@ def test_live_departure_sorts_by_live_minutes():
     assert minutes == sorted(minutes)
 
 
-def test_gtfs_fallback_still_works_without_utc():
+def test_departure_without_utc_is_skipped():
+    # When Transitland returns departure=null with only a local-timezone GTFS
+    # departure_time, we can't compute accurate minutes without the agency
+    # timezone — so we skip the departure rather than show a wrong time.
     response = {
         "stops": [
             {
@@ -411,10 +415,7 @@ def test_gtfs_fallback_still_works_without_utc():
         m.get("http://mock-transitland/stops/42/departures", json=response)
         result = proxy.get_departures(42, next_seconds=86400)
 
-    deps = result["departures"]
-    for d in deps:
-        assert "time_source" in d
-        assert "scheduled_departure_time" in d
+    assert result["departures"] == []
 
 
 def test_upstream_500_raises_http_response():
