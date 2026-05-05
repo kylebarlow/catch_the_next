@@ -344,6 +344,7 @@ def get_departures_batch(stop_ids, next_seconds=7200):
             "stop_id": stop_id,
             "departures": _shape_departures(data),
             "alerts": _shape_alerts(data),
+            "stale": not bool(data.get("stops")),
         })
     return {"stops": stops}
 

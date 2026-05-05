@@ -32,6 +32,7 @@ data class StopWithDepartures(
     val departures: List<CachedDeparture>,
     val fetchedAt: Long = System.currentTimeMillis(),
     val alerts: List<Alert> = emptyList(),
+    val isStale: Boolean = false,
 )
 
 sealed interface TileState {
@@ -56,6 +57,7 @@ data class CachedStopFetch(
     val departures: List<CachedDeparture>,
     val alerts: List<Alert>,
     val fetchedAt: Long,
+    val isStale: Boolean = false,
 )
 
 suspend fun updateNearbyStopsDepartures(
@@ -89,7 +91,7 @@ suspend fun updateNearbyStopsDepartures(
     for ((stop, distanceMeters) in selected) {
         val fetch = batchMap[stop.id] ?: continue
         val filtered = fetch.departures.filter { it.currentMinutes() >= 0 }
-        successful.add(StopWithDepartures(stop = stop, distanceMeters = distanceMeters, departures = filtered, alerts = fetch.alerts, fetchedAt = fetch.fetchedAt))
+        successful.add(StopWithDepartures(stop = stop, distanceMeters = distanceMeters, departures = filtered, alerts = fetch.alerts, fetchedAt = fetch.fetchedAt, isStale = fetch.isStale))
     }
 
     return if (successful.isEmpty()) {
@@ -156,6 +158,36 @@ suspend fun computeTileState(
     )
 }
 
+/**
+ * For any stops in [readyState] flagged as stale (their Transitland integer ID has been rotated),
+ * searches nearby using the stored lat/lon and matches by GTFS stop_id to find the new integer ID.
+ * Returns the updated favorites list if any IDs were resolved, null if nothing changed.
+ */
+suspend fun resolveStaleStops(
+    readyState: TileState.Ready,
+    allFavorites: List<Stop>,
+    getNearbyStops: suspend (lat: Double, lon: Double) -> List<Stop>,
+): List<Stop>? {
+    val staleStops = readyState.stops.filter { it.isStale }.map { it.stop }
+    if (staleStops.isEmpty()) return null
+
+    val updated = allFavorites.toMutableList()
+    var anyResolved = false
+    for (staleStop in staleStops) {
+        val nearby = getNearbyStops(staleStop.lat, staleStop.lon)
+        val match = nearby.firstOrNull { it.stopId == staleStop.stopId }
+            ?: nearby.firstOrNull { it.onestopId != null && it.onestopId == staleStop.onestopId }
+        if (match != null && match.id != staleStop.id) {
+            val idx = updated.indexOfFirst { it.id == staleStop.id }
+            if (idx >= 0) {
+                updated[idx] = match
+                anyResolved = true
+            }
+        }
+    }
+    return if (anyResolved) updated else null
+}
+
 /** Network fetch + per-stop 60 s cache check + error fallback for a single stop. */
 fun makeFetchNetworkDepartures(
     getDepartures: suspend (Long) -> StopDepartures,
@@ -219,6 +251,7 @@ fun makeFetchNetworkDeparturesBatch(
                         },
                         alerts = stopDeps.alerts,
                         fetchedAt = fetchTime,
+                        isStale = stopDeps.isStale,
                     )
                 }
             }.getOrElse { e ->

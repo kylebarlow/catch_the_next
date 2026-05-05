@@ -27,6 +27,7 @@ import dev.catchthenext.android.tile.TileDataStore
 import dev.catchthenext.android.tile.TileState
 import dev.catchthenext.android.tile.computeTileState
 import dev.catchthenext.android.tile.makeFetchNetworkDeparturesBatch
+import dev.catchthenext.android.tile.resolveStaleStops
 import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.DeparturesViewModel
@@ -161,7 +162,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                     }
                 },
                 computeState = { forceFresh ->
-                    val favorites = favoritesManager.getFavorites()
+                    var favorites = favoritesManager.getFavorites()
                     val hasPerm = ContextCompat.checkSelfPermission(
                         context, Manifest.permission.ACCESS_COARSE_LOCATION
                     ) == PackageManager.PERMISSION_GRANTED
@@ -172,7 +173,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                     val lon = freshLocation?.lon ?: cache.lon
                     val location = if (lat != null && lon != null) LatLon(lat, lon) else null
                     val threshold = distanceStore.thresholdMetersFlow.first()
-                    computeTileState(
+                    var state = computeTileState(
                         favorites = favorites,
                         location = location,
                         hasPermission = hasPerm,
@@ -184,6 +185,28 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                         ),
                         persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
                     )
+                    if (state is TileState.Ready) {
+                        val resolved = resolveStaleStops(state, favorites) { lat, lon ->
+                            client.getNearbyStops(lat, lon, radiusMeters = 100)
+                        }
+                        if (resolved != null) {
+                            favoritesManager.saveFavorites(resolved)
+                            favorites = resolved
+                            state = computeTileState(
+                                favorites = favorites,
+                                location = location,
+                                hasPermission = hasPerm,
+                                thresholdMeters = threshold,
+                                fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
+                                    getDeparturesBatch = { ids -> client.getDeparturesBatch(ids) },
+                                    cache = dataStore.read(),
+                                    forceFresh = true,
+                                ),
+                                persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
+                            )
+                        }
+                    }
+                    state
                 }
             ) as T
         }

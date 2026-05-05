@@ -90,7 +90,7 @@ class TransitlandClient(
             val deps = batchStop.departures.mapNotNull { it.toDeparture(stopId) }
                 .sortedBy { it.displayDepartureMinutes }
             val alerts = batchStop.alerts?.mapNotNull { it.toAlert() } ?: emptyList()
-            Pair(stopId, StopDepartures(stopId, deps, alerts))
+            Pair(stopId, StopDepartures(stopId, deps, alerts, isStale = batchStop.stale))
         }
     }
 
@@ -189,6 +189,7 @@ class TransitlandClient(
         @SerializedName("stop_id") val stopId: Long? = null,
         val departures: List<ProxyDepartureJson> = emptyList(),
         val alerts: List<AlertJson>? = null,
+        val stale: Boolean = false,
     )
 
     private data class AlertActivePeriodJson(

@@ -9,6 +9,7 @@ data class StopDepartures(
     val stopId: Long,
     val departures: List<Departure>,
     val alerts: List<Alert> = emptyList(),
+    val isStale: Boolean = false,
 )
 
 interface TransitApi {

@@ -754,6 +754,22 @@ def test_get_departures_batch_alerts_key_present_when_no_alerts():
     assert result["stops"][0]["alerts"] == []
 
 
+def test_get_departures_batch_stale_false_when_stop_exists():
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures_batch([10], next_seconds=3600)
+    assert result["stops"][0]["stale"] is False
+
+
+def test_get_departures_batch_stale_true_when_stop_not_found():
+    empty_response = {"stops": []}
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops/99/departures", json=empty_response)
+        result = proxy.get_departures_batch([99], next_seconds=3600)
+    assert result["stops"][0]["stale"] is True
+    assert result["stops"][0]["departures"] == []
+
+
 # ── geocode ────────────────────────────────────────────────────────────────────
 
 _NOMINATIM_URL = f"{proxy._NOMINATIM_BASE_URL}/search"
