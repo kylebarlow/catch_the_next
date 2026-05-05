@@ -207,7 +207,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
         }
         modelClass.isAssignableFrom(AddStopViewModel::class.java) ->
             AddStopViewModel(
-                getNearbyStops = { lat, lon -> WearGraph.transitlandClient().getNearbyStops(lat, lon) },
+                getNearbyStops = { lat, lon, r -> WearGraph.transitlandClient().getNearbyStops(lat, lon, r) },
                 favoritesManager = WearGraph.favoritesManager(context),
                 locationProvider = LocationProvider(context),
             ) as T
