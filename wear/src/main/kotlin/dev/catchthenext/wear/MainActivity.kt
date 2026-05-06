@@ -44,6 +44,7 @@ import dev.catchthenext.wear.ui.SettingsScreen
 import dev.catchthenext.wear.ui.SettingsThresholdScreen
 import dev.catchthenext.wear.ui.StopConfirmScreen
 import dev.catchthenext.wear.ui.StopDetailsScreen
+import dev.catchthenext.android.sync.FavoritesSyncForcer
 import dev.catchthenext.android.sync.FavoritesSyncListener
 import dev.catchthenext.android.sync.SyncMetadataStore
 import kotlinx.coroutines.CoroutineScope
@@ -181,6 +182,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                         fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                             getDeparturesBatch = { ids -> client.getDeparturesBatch(ids) },
                             cache = cache,
+                            stops = favorites,
                             forceFresh = forceFresh,
                         ),
                         persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
@@ -200,6 +202,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                                 fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                                     getDeparturesBatch = { ids -> client.getDeparturesBatch(ids) },
                                     cache = dataStore.read(),
+                                    stops = favorites,
                                     forceFresh = true,
                                 ),
                                 persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
@@ -236,11 +239,14 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
             ) as T
         modelClass.isAssignableFrom(SettingsViewModel::class.java) -> {
             val store = DistanceUnitStore(context)
+            val fm = WearGraph.favoritesManager(context)
+            val meta = SyncMetadataStore(context)
             SettingsViewModel(
                 distanceUnitFlow = store.unitFlow,
                 persistUnit = { store.setUnit(it) },
                 thresholdMetersFlow = store.thresholdMetersFlow,
                 persistThreshold = { store.setThresholdMeters(it) },
+                triggerSync = { FavoritesSyncForcer.forceSync(context, fm, meta) },
             ) as T
         }
         modelClass.isAssignableFrom(AboutViewModel::class.java) -> {

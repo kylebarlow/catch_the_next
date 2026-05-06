@@ -5,6 +5,7 @@ import androidx.wear.tiles.TileService
 import dev.catchthenext.android.sync.CapabilityWatcher
 import dev.catchthenext.android.sync.FavoritesSyncListener
 import dev.catchthenext.android.sync.FavoritesSyncPublisher
+import dev.catchthenext.android.sync.FavoritesSyncWorker
 import dev.catchthenext.android.sync.SyncMetadataStore
 import dev.catchthenext.android.tile.DepartureWorker
 import dev.catchthenext.android.tile.DeparturesRefreshCallbacks
@@ -33,5 +34,10 @@ class WearApp : Application() {
         CoroutineScope(Dispatchers.IO).launch {
             FavoritesSyncListener.coldStartReconcile(this@WearApp, mgr, meta)
         }
+        FavoritesSyncWorker.configure(
+            getFavorites = { ctx -> WearGraph.favoritesManager(ctx) },
+            getMetaStore = { ctx -> SyncMetadataStore(ctx) },
+        )
+        FavoritesSyncWorker.schedule(this)
     }
 }

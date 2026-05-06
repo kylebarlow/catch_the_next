@@ -14,11 +14,19 @@ import com.google.android.horologist.compose.layout.ScalingLazyColumnDefaults
 import dev.catchthenext.android.location.formatDistance
 import dev.catchthenext.android.storage.DistanceUnit
 import dev.catchthenext.android.ui.SettingsViewModel
+import dev.catchthenext.android.ui.SyncStatus
 
 @Composable
 fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
     val unit by viewModel.distanceUnit.collectAsState()
     val thresholdMeters by viewModel.thresholdMeters.collectAsState()
+    val syncStatus by viewModel.syncStatus.collectAsState()
+    val syncStatusText = when (syncStatus) {
+        SyncStatus.SYNCING -> "Syncing…"
+        SyncStatus.SUCCESS -> "Synced"
+        SyncStatus.ERROR -> "Failed"
+        SyncStatus.IDLE -> ""
+    }
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -46,6 +54,16 @@ fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
                 onClick = { navController.navigate("settings/threshold") },
                 label = { Text(formatDistance(thresholdMeters.toDouble(), unit)) },
                 secondaryLabel = { Text("Nearby stop range") },
+                colors = ChipDefaults.secondaryChipColors(),
+            )
+        }
+
+        item {
+            Chip(
+                onClick = { viewModel.syncNow() },
+                enabled = syncStatus == SyncStatus.IDLE,
+                label = { Text("Sync now") },
+                secondaryLabel = { if (syncStatusText.isNotEmpty()) Text(syncStatusText) },
                 colors = ChipDefaults.secondaryChipColors(),
             )
         }

@@ -127,6 +127,7 @@ class DeparturesWidget : GlanceAppWidget() {
             fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                 getDeparturesBatch = { ids -> client.getDeparturesBatch(ids) },
                 cache = cache,
+                stops = favorites,
             ),
             persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
         )

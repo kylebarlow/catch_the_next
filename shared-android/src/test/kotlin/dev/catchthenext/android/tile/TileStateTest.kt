@@ -16,7 +16,7 @@ class TileStateTest {
     private val sfLocation = LatLon(37.770, -122.410)
 
     private fun stop(id: Long, lat: Double, lon: Double) =
-        Stop(id, "S$id", "Stop $id", lat, lon)
+        Stop(id, "S$id", "Stop $id", lat, lon, onestopId = "s-$id")
 
     private fun cachedDep(minutesFromNow: Long, timeSource: DepartureTimeSource = DepartureTimeSource.SCHEDULED) = CachedDeparture(
         routeShortName = "14",
@@ -331,7 +331,7 @@ class TileStateTest {
         val staleCached = cachedStopDeps(2L, now - 90_000, 15L)
         val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshCached, staleCached))
 
-        val batchCallLog = mutableListOf<List<Long>>()
+        val batchCallLog = mutableListOf<List<String>>()
         val state = computeTileState(
             favorites = listOf(stop1, stop2),
             location = sfLocation,
@@ -340,17 +340,18 @@ class TileStateTest {
             fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                 getDeparturesBatch = { stopIds ->
                     batchCallLog.add(stopIds)
-                    stopIds.associateWith { id ->
-                        StopDepartures(id, listOf(Departure(id, "10:00", 20L, null, null, "10:00", 20L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
+                    stopIds.associateWith { _ ->
+                        StopDepartures(0L, listOf(Departure(0L, "10:00", 20L, null, null, "10:00", 20L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
                     }
                 },
                 cache = cache,
+                stops = listOf(stop1, stop2),
             ),
         )
 
         assertTrue(state is TileState.Ready)
         assertEquals(1, batchCallLog.size, "Should make exactly one batch call")
-        assertEquals(listOf(2L), batchCallLog[0], "Only stale stop 2 should be in the batch request")
+        assertEquals(listOf("s-2"), batchCallLog[0], "Only stale stop 2 should be in the batch request")
     }
 
     @Test
@@ -460,6 +461,7 @@ class TileStateTest {
                     emptyMap()
                 },
                 cache = cache,
+                stops = listOf(stop(1L, 37.77, -122.41), stop(2L, 37.771, -122.41)),
             ),
         )
         assertTrue(state is TileState.Ready)
@@ -518,6 +520,7 @@ class TileStateTest {
             fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                 getDeparturesBatch = { throw RuntimeException("network error") },
                 cache = cache,
+                stops = listOf(stop(1L, 37.77, -122.41)),
             ),
         )
         val ready = state as TileState.Ready
@@ -534,6 +537,7 @@ class TileStateTest {
         val fetch = makeFetchNetworkDeparturesBatch(
             getDeparturesBatch = { networkCalled = true; emptyMap() },
             cache = cache,
+            stops = listOf(stop(1L, 37.77, -122.41)),
             forceFresh = false,
         )
 
@@ -552,11 +556,12 @@ class TileStateTest {
         val fetch = makeFetchNetworkDeparturesBatch(
             getDeparturesBatch = { stopIds ->
                 networkCalled = true
-                stopIds.associateWith { id ->
-                    StopDepartures(id, listOf(Departure(id, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
+                stopIds.associateWith { _ ->
+                    StopDepartures(0L, listOf(Departure(0L, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
                 }
             },
             cache = cache,
+            stops = listOf(stop(1L, 37.77, -122.41)),
             forceFresh = true,
         )
 
@@ -577,14 +582,15 @@ class TileStateTest {
             hasPermission = true,
             fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                 getDeparturesBatch = { stopIds ->
-                    stopIds.associateWith { id ->
-                        StopDepartures(id, listOf(
-                            Departure(id, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
-                            Departure(id, "10:15", 20L, null, null, "10:15", 20L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
+                    stopIds.associateWith { _ ->
+                        StopDepartures(0L, listOf(
+                            Departure(0L, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
+                            Departure(0L, "10:15", 20L, null, null, "10:15", 20L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
                         ))
                     }
                 },
                 cache = cache,
+                stops = listOf(s1, s2),
                 forceFresh = true,
             ),
         )

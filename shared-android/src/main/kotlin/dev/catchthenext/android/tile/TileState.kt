@@ -219,8 +219,9 @@ fun makeFetchNetworkDepartures(
 
 /** Batch-aware network fetch + per-stop 60 s cache check + error fallback. */
 fun makeFetchNetworkDeparturesBatch(
-    getDeparturesBatch: suspend (List<Long>) -> Map<Long, StopDepartures>,
+    getDeparturesBatch: suspend (List<String>) -> Map<String, StopDepartures>,
     cache: CachedTileData,
+    stops: List<Stop>,
     forceFresh: Boolean = false,
 ): suspend (List<Long>) -> Map<Long, CachedStopFetch> = { stopIds ->
     if (stopIds.isEmpty()) {
@@ -240,30 +241,49 @@ fun makeFetchNetworkDeparturesBatch(
         }
 
         if (staleStopIds.isNotEmpty()) {
-            runCatching {
-                val batchResult = getDeparturesBatch(staleStopIds)
-                val fetchTime = System.currentTimeMillis()
-                for (stopId in staleStopIds) {
-                    val stopDeps = batchResult[stopId] ?: StopDepartures(stopId, emptyList())
-                    result[stopId] = CachedStopFetch(
-                        departures = stopDeps.departures.map { dep ->
-                            CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
-                        },
-                        alerts = stopDeps.alerts,
-                        fetchedAt = fetchTime,
-                        isStale = stopDeps.isStale,
-                    )
-                }
-            }.getOrElse { e ->
-                for (stopId in staleStopIds) {
-                    if (stopId !in result) {
-                        val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
-                        if (cached != null && cached.departures.isNotEmpty()) {
-                            result[stopId] = CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
-                        }
+            val idToStop = stops.associateBy { it.id }
+            // Map onestop ID → internal Long stop ID for reverse lookup after the network call.
+            val onestopToLong = staleStopIds.mapNotNull { stopId ->
+                val onestopId = idToStop[stopId]?.onestopId ?: return@mapNotNull null
+                onestopId to stopId
+            }.toMap()
+
+            // Stops without an onestop ID can't be network-fetched; use stale cache immediately.
+            val queryableIds = onestopToLong.values.toSet()
+            for (stopId in staleStopIds) {
+                if (stopId !in queryableIds) {
+                    val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+                    if (cached != null && cached.departures.isNotEmpty()) {
+                        result[stopId] = CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
                     }
                 }
-                if (result.isEmpty()) throw e
+            }
+
+            if (onestopToLong.isNotEmpty()) {
+                runCatching {
+                    val batchResult = getDeparturesBatch(onestopToLong.keys.toList())
+                    val fetchTime = System.currentTimeMillis()
+                    for ((onestopId, stopId) in onestopToLong) {
+                        val stopDeps = batchResult[onestopId] ?: continue
+                        result[stopId] = CachedStopFetch(
+                            departures = stopDeps.departures.map { dep ->
+                                CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
+                            },
+                            alerts = stopDeps.alerts,
+                            fetchedAt = fetchTime,
+                        )
+                    }
+                }.getOrElse { e ->
+                    for (stopId in onestopToLong.values) {
+                        if (stopId !in result) {
+                            val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+                            if (cached != null && cached.departures.isNotEmpty()) {
+                                result[stopId] = CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
+                            }
+                        }
+                    }
+                    if (result.isEmpty()) throw e
+                }
             }
         }
 

@@ -14,11 +14,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -30,6 +33,7 @@ import androidx.navigation.NavController
 import dev.catchthenext.android.location.formatDistance
 import dev.catchthenext.android.storage.DistanceUnit
 import dev.catchthenext.android.ui.SettingsViewModel
+import dev.catchthenext.android.ui.SyncStatus
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -40,9 +44,18 @@ private val THRESHOLD_STEPS_METERS = listOf(161, 402, 805, 1207, 1609, 2414, 321
 fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
     val unit by viewModel.distanceUnit.collectAsState()
     val thresholdMeters by viewModel.thresholdMeters.collectAsState()
+    val syncStatus by viewModel.syncStatus.collectAsState()
     var showThresholdDialog by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(Unit) {
+        viewModel.syncEvents.collect { message ->
+            snackbarHostState.showSnackbar(message)
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
@@ -75,6 +88,17 @@ fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
                     IconButton(onClick = { showThresholdDialog = true }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Change")
                     }
+                }
+            )
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("Watch sync") },
+                supportingContent = { if (syncStatus == SyncStatus.SYNCING) Text("Syncing…") },
+                trailingContent = {
+                    TextButton(
+                        onClick = { viewModel.syncNow() },
+                        enabled = syncStatus == SyncStatus.IDLE,
+                    ) { Text("Sync now") }
                 }
             )
             HorizontalDivider()

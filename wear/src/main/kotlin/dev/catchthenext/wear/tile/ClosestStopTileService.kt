@@ -73,7 +73,7 @@ class ClosestStopTileService : SuspendingTileService() {
                 location = location,
                 hasPermission = hasPerm,
                 thresholdMeters = threshold,
-                fetchDeparturesBatch = makeFetchNetworkDeparturesBatch({ client.getDeparturesBatch(it) }, cache),
+                fetchDeparturesBatch = makeFetchNetworkDeparturesBatch({ client.getDeparturesBatch(it) }, cache, favorites),
                 persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
             )
         }

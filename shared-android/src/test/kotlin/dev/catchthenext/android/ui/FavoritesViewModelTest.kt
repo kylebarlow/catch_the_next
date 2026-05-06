@@ -23,8 +23,8 @@ import org.junit.jupiter.api.Test
 class FavoritesViewModelTest {
     private val testDispatcher = UnconfinedTestDispatcher()
 
-    private val stop1 = Stop(1L, "S1", "Stop One", 37.77, -122.41)
-    private val stop2 = Stop(2L, "S2", "Stop Two", 37.78, -122.41)
+    private val stop1 = Stop(1L, "S1", "Stop One", 37.77, -122.41, onestopId = "s-stop1")
+    private val stop2 = Stop(2L, "S2", "Stop Two", 37.78, -122.41, onestopId = "s-stop2")
     private val fakeLocation = LatLon(37.77, -122.41)
 
     @BeforeEach
@@ -80,11 +80,11 @@ class FavoritesViewModelTest {
         val (fake, vm) = makeVm()
         vm.favorites.test {
             awaitItem() // initial list
-            vm.removeFavorite(stop1.id)
+            vm.removeFavorite(stop1.onestopId!!)
             val items = awaitItem()
             assertEquals(1, items.size)
             assertEquals(stop2.id, items[0].id)
-            assertFalse(fake.isFavorite(stop1.id))
+            assertFalse(fake.isFavorite(stop1.onestopId!!))
             cancelAndIgnoreRemainingEvents()
         }
     }

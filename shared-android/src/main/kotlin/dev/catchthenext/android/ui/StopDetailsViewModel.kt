@@ -50,7 +50,7 @@ class StopDetailsViewModel(
         val current = _ui.value as? DetailsUi.Loaded ?: return
         viewModelScope.launch(ioDispatcher) {
             if (current.isFavorite) {
-                favoritesManager.removeFavorite(stopId)
+                favoritesManager.removeFavorite(current.stop.onestopId ?: "")
             } else {
                 favoritesManager.addFavorite(current.stop)
             }

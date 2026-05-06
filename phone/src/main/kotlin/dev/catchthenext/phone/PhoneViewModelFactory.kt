@@ -25,6 +25,8 @@ import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.android.ui.FavoritesViewModel
 import dev.catchthenext.android.ui.PlaceSearchViewModel
 import dev.catchthenext.android.ui.SettingsViewModel
+import dev.catchthenext.android.sync.FavoritesSyncForcer
+import dev.catchthenext.android.sync.SyncMetadataStore
 import kotlinx.coroutines.flow.first
 
 class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
@@ -87,6 +89,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
                         fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                             getDeparturesBatch = { ids -> client.getDeparturesBatch(ids) },
                             cache = cache,
+                            stops = favorites,
                             forceFresh = forceFresh,
                         ),
                         persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
@@ -106,6 +109,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
                                 fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
                                     getDeparturesBatch = { ids -> client.getDeparturesBatch(ids) },
                                     cache = dataStore.read(),
+                                    stops = favorites,
                                     forceFresh = true,
                                 ),
                                 persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
@@ -149,11 +153,14 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
             ) as T
         modelClass.isAssignableFrom(SettingsViewModel::class.java) -> {
             val store = DistanceUnitStore(context)
+            val fm = PhoneGraph.favoritesManager(context)
+            val meta = SyncMetadataStore(context)
             SettingsViewModel(
                 distanceUnitFlow = store.unitFlow,
                 persistUnit = { store.setUnit(it) },
                 thresholdMetersFlow = store.thresholdMetersFlow,
                 persistThreshold = { store.setThresholdMeters(it) },
+                triggerSync = { FavoritesSyncForcer.forceSync(context, fm, meta) },
             ) as T
         }
         modelClass.isAssignableFrom(AboutViewModel::class.java) -> {

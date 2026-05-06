@@ -23,11 +23,11 @@ class FakeFavoritesManager(initial: List<Stop> = emptyList()) : FavoritesManager
         }
     }
 
-    override fun removeFavorite(stopId: Long): Boolean {
+    override fun removeFavorite(onestopId: String): Boolean {
         val before = _data.value
-        _data.value = before.filter { it.id != stopId }
+        _data.value = before.filter { it.onestopId != onestopId }
         return _data.value.size < before.size
     }
 
-    override fun isFavorite(stopId: Long): Boolean = _data.value.any { it.id == stopId }
+    override fun isFavorite(onestopId: String): Boolean = _data.value.any { it.onestopId == onestopId }
 }

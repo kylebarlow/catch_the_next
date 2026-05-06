@@ -5,6 +5,7 @@ import androidx.glance.appwidget.updateAll
 import dev.catchthenext.android.sync.CapabilityWatcher
 import dev.catchthenext.android.sync.FavoritesSyncListener
 import dev.catchthenext.android.sync.FavoritesSyncPublisher
+import dev.catchthenext.android.sync.FavoritesSyncWorker
 import dev.catchthenext.android.sync.SyncMetadataStore
 import dev.catchthenext.android.tile.DepartureWorker
 import dev.catchthenext.android.tile.DeparturesRefreshCallbacks
@@ -33,5 +34,10 @@ class PhoneApp : Application() {
         CoroutineScope(Dispatchers.IO).launch {
             FavoritesSyncListener.coldStartReconcile(this@PhoneApp, mgr, meta)
         }
+        FavoritesSyncWorker.configure(
+            getFavorites = { ctx -> PhoneGraph.favoritesManager(ctx) },
+            getMetaStore = { ctx -> SyncMetadataStore(ctx) },
+        )
+        FavoritesSyncWorker.schedule(this)
     }
 }

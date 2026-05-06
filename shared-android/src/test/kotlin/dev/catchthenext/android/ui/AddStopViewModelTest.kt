@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test
 class AddStopViewModelTest {
     private val testDispatcher = UnconfinedTestDispatcher()
 
-    private val stop1 = Stop(1L, "S1", "Stop One", 37.77, -122.41)
-    private val stop2 = Stop(2L, "S2", "Stop Two", 37.78, -122.41)
+    private val stop1 = Stop(1L, "S1", "Stop One", 37.77, -122.41, onestopId = "s-stop1")
+    private val stop2 = Stop(2L, "S2", "Stop Two", 37.78, -122.41, onestopId = "s-stop2")
     private val fakeLocation = LatLon(37.77, -122.41)
 
     @BeforeEach
@@ -105,7 +105,7 @@ class AddStopViewModelTest {
         val manager = FakeFavoritesManager()
         val vm = makeVm(manager = manager)
         vm.addStop(stop1)
-        assertTrue(manager.isFavorite(stop1.id))
+        assertTrue(manager.isFavorite(stop1.onestopId!!))
     }
 
     @Test

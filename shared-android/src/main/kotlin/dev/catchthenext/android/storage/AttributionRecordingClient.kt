@@ -29,8 +29,8 @@ class AttributionRecordingClient(
         return result
     }
 
-    override fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int): Map<Long, StopDepartures> {
-        val result = delegate.getDeparturesBatch(stopIds, nextSeconds)
+    override fun getDeparturesBatch(onestopIds: List<String>, nextSeconds: Int): Map<String, StopDepartures> {
+        val result = delegate.getDeparturesBatch(onestopIds, nextSeconds)
         recordFeeds(result.values.flatMap { it.departures }.mapNotNull { it.feed }.distinctBy { it.feedOnestopId })
         return result
     }
