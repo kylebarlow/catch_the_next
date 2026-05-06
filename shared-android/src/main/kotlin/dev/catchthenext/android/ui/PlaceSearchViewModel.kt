@@ -7,6 +7,7 @@ import dev.catchthenext.model.Place
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.debounce
@@ -50,7 +51,7 @@ class PlaceSearchViewModel(
                     emit(PlaceSearchUi.Searching)
                     val result = runCatching {
                         val f = focus()
-                        geocode(q, f?.lat, f?.lon)
+                        withContext(ioDispatcher) { geocode(q, f?.lat, f?.lon) }
                     }
                     emit(
                         result.fold(

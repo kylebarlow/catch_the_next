@@ -2,10 +2,15 @@ package dev.catchthenext.android.ui
 
 import app.cash.turbine.test
 import dev.catchthenext.model.Place
+import kotlin.coroutines.ContinuationInterceptor
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -123,5 +128,25 @@ class PlaceSearchViewModelTest {
         assertTrue(vm.ui.value is PlaceSearchUi.Results)
         vm.onQueryChanged("Be")
         assertTrue(vm.ui.value is PlaceSearchUi.Idle)
+    }
+
+    @Test
+    fun `geocode runs on ioDispatcher not on Main`() = runTest {
+        val ioDispatcher = StandardTestDispatcher(testScheduler, name = "io-under-test")
+        var observedDispatcher: CoroutineDispatcher? = null
+        val vm = PlaceSearchViewModel(
+            geocode = { _, _, _ ->
+                observedDispatcher = currentCoroutineContext()[ContinuationInterceptor] as? CoroutineDispatcher
+                listOf(place1)
+            },
+            ioDispatcher = ioDispatcher,
+            debounceMs = 0L,
+        )
+        vm.onQueryChanged("Berkeley")
+        advanceUntilIdle()
+        assertEquals(
+            ioDispatcher, observedDispatcher,
+            "geocode must run on ioDispatcher (otherwise NetworkOnMainThreadException on Android)",
+        )
     }
 }
