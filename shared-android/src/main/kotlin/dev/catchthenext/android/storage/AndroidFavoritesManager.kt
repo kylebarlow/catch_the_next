@@ -47,22 +47,22 @@ class AndroidFavoritesManager(private val context: Context) : FavoritesManager {
 
     override fun addFavorite(stop: Stop) {
         val favorites = getFavorites().toMutableList()
-        if (favorites.none { it.id == stop.id }) {
+        if (favorites.none { it.onestopId != null && it.onestopId == stop.onestopId }) {
             favorites.add(stop)
             saveFavorites(favorites)
         }
     }
 
-    override fun removeFavorite(stopId: Long): Boolean {
+    override fun removeFavorite(onestopId: String): Boolean {
         val favorites = getFavorites().toMutableList()
-        val removed = favorites.removeAll { it.id == stopId }
+        val removed = favorites.removeAll { it.onestopId == onestopId }
         if (removed) {
             saveFavorites(favorites)
         }
         return removed
     }
 
-    override fun isFavorite(stopId: Long): Boolean {
-        return getFavorites().any { it.id == stopId }
+    override fun isFavorite(onestopId: String): Boolean {
+        return getFavorites().any { it.onestopId == onestopId }
     }
 }

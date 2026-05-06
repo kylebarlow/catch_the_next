@@ -76,22 +76,22 @@ class TransitlandClient(
         return response.places.map { it.toPlace() }
     }
 
-    override fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int): Map<Long, StopDepartures> {
-        if (stopIds.isEmpty()) return emptyMap()
+    override fun getDeparturesBatch(onestopIds: List<String>, nextSeconds: Int): Map<String, StopDepartures> {
+        if (onestopIds.isEmpty()) return emptyMap()
         val url = "$baseUrl/departures".toHttpUrl().newBuilder()
-            .addQueryParameter("stop_ids", stopIds.joinToString(","))
+            .addQueryParameter("onestop_ids", onestopIds.joinToString(","))
             .addQueryParameter("next", nextSeconds.toString())
             .build()
 
         val body = executeGet(url.toString())
         val response = gson.fromJson(body, BatchDeparturesResponse::class.java)
-        return response.stops.associate { batchStop ->
-            val stopId = batchStop.stopId ?: return@associate Pair(0L, StopDepartures(0L, emptyList()))
-            val deps = batchStop.departures.mapNotNull { it.toDeparture(stopId) }
+        return response.stops.mapNotNull { batchStop ->
+            val onestopId = batchStop.onestopId ?: return@mapNotNull null
+            val deps = batchStop.departures.mapNotNull { it.toDeparture(0L) }
                 .sortedBy { it.displayDepartureMinutes }
             val alerts = batchStop.alerts?.mapNotNull { it.toAlert() } ?: emptyList()
-            Pair(stopId, StopDepartures(stopId, deps, alerts, isStale = batchStop.stale))
-        }
+            Pair(onestopId, StopDepartures(0L, deps, alerts))
+        }.toMap()
     }
 
     private fun executeGet(url: String): String {
@@ -186,10 +186,9 @@ class TransitlandClient(
     private data class BatchDeparturesResponse(val stops: List<BatchStopDeparturesJson> = emptyList())
 
     private data class BatchStopDeparturesJson(
-        @SerializedName("stop_id") val stopId: Long? = null,
+        @SerializedName("onestop_id") val onestopId: String? = null,
         val departures: List<ProxyDepartureJson> = emptyList(),
         val alerts: List<AlertJson>? = null,
-        val stale: Boolean = false,
     )
 
     private data class AlertActivePeriodJson(

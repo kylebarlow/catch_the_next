@@ -34,7 +34,7 @@ class CliFavoritesManager(
 
     override fun addFavorite(stop: Stop) {
         val current = getFavorites().toMutableList()
-        if (current.none { it.id == stop.id }) {
+        if (current.none { it.onestopId != null && it.onestopId == stop.onestopId }) {
             current.add(stop)
             saveFavorites(current)
             println("  Added: ${stop.displayString()}")
@@ -43,14 +43,14 @@ class CliFavoritesManager(
         }
     }
 
-    override fun removeFavorite(stopId: Long): Boolean {
+    override fun removeFavorite(onestopId: String): Boolean {
         val current = getFavorites().toMutableList()
-        val removed = current.removeAll { it.id == stopId }
+        val removed = current.removeAll { it.onestopId == onestopId }
         if (removed) saveFavorites(current)
         return removed
     }
 
-    override fun isFavorite(stopId: Long): Boolean = getFavorites().any { it.id == stopId }
+    override fun isFavorite(onestopId: String): Boolean = getFavorites().any { it.onestopId == onestopId }
 
     override fun favoritesFlow(): Flow<List<Stop>> = _flow.asStateFlow()
 

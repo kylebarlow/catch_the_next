@@ -490,62 +490,107 @@ def test_proxy_uses_descriptive_user_agent():
     assert "CatchTheNext" in ua, f"Expected CatchTheNext in User-Agent, got: {ua}"
 
 
-def test_get_departures_batch_returns_grouped_results():
+RESOLVE_RESPONSE_10_20 = {
+    "stops": [
+        {"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}},
+        {"id": 20, "onestop_id": "s-test-20", "stop_name": "Stop 20", "geometry": {"coordinates": [-122.4, 37.8]}},
+    ]
+}
+
+RESOLVE_RESPONSE_42 = {
+    "stops": [
+        {"id": 42, "onestop_id": "s-test-42", "stop_name": "Stop 42", "geometry": {"coordinates": [-122.4, 37.8]}},
+    ]
+}
+
+
+def test_get_departures_by_onestop_ids_returns_grouped_results():
     with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_10_20)
         m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
         m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
-        result = proxy.get_departures_batch([10, 20], next_seconds=3600)
+        result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
     assert "stops" in result
     assert len(result["stops"]) == 2
-    assert result["stops"][0]["stop_id"] == 10
-    assert result["stops"][1]["stop_id"] == 20
+    assert result["stops"][0]["onestop_id"] == "s-test-10"
+    assert result["stops"][1]["onestop_id"] == "s-test-20"
     assert "departures" in result["stops"][0]
     assert "departures" in result["stops"][1]
     assert len(result["stops"][0]["departures"]) > 0
     assert len(result["stops"][1]["departures"]) > 0
 
 
-def test_get_departures_batch_preserves_request_order():
+def test_get_departures_by_onestop_ids_preserves_request_order():
+    resolve = {
+        "stops": [
+            {"id": 30, "onestop_id": "s-test-30", "stop_name": "Stop 30", "geometry": {"coordinates": [-122.4, 37.8]}},
+            {"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}},
+        ]
+    }
     with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=resolve)
         m.get("http://mock-transitland/stops/30/departures", json=DEPARTURES_RESPONSE)
         m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        result = proxy.get_departures_batch([30, 10], next_seconds=3600)
+        result = proxy.get_departures_by_onestop_ids(["s-test-30", "s-test-10"], next_seconds=3600)
 
-    assert result["stops"][0]["stop_id"] == 30
-    assert result["stops"][1]["stop_id"] == 10
+    assert result["stops"][0]["onestop_id"] == "s-test-30"
+    assert result["stops"][1]["onestop_id"] == "s-test-10"
 
 
-def test_get_departures_batch_returns_empty_departures_for_stop_with_none():
+def test_get_departures_by_onestop_ids_returns_empty_when_stop_not_resolved():
+    # When a onestop_id is not found in the resolve step, return empty departures.
+    resolve_one = {
+        "stops": [
+            {"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}},
+        ]
+    }
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=resolve_one)
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-notfound"], next_seconds=3600)
+
+    found = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
+    not_found = next(s for s in result["stops"] if s["onestop_id"] == "s-test-notfound")
+    assert len(found["departures"]) > 0
+    assert not_found["departures"] == []
+    assert not_found["alerts"] == []
+
+
+def test_get_departures_by_onestop_ids_returns_empty_departures_for_stop_with_none():
     response_no_deps = {"stops": [{"departures": None, "children": None}]}
     with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_10_20)
         m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
         m.get("http://mock-transitland/stops/20/departures", json=response_no_deps)
-        result = proxy.get_departures_batch([10, 20], next_seconds=3600)
+        result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
-    assert result["stops"][0]["stop_id"] == 10
-    assert len(result["stops"][0]["departures"]) > 0
-    assert result["stops"][1]["stop_id"] == 20
-    assert result["stops"][1]["departures"] == []
+    stop10 = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
+    stop20 = next(s for s in result["stops"] if s["onestop_id"] == "s-test-20")
+    assert len(stop10["departures"]) > 0
+    assert stop20["departures"] == []
 
 
-def test_get_departures_batch_applies_next_to_all_calls():
+def test_get_departures_by_onestop_ids_applies_next_to_departure_calls():
     with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_10_20)
         m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
         m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE)
-        proxy.get_departures_batch([10, 20], next_seconds=1800)
+        proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=1800)
 
     for req in m.request_history:
-        assert "next=1800" in req.url
+        if "/departures" in req.path:
+            assert "next=1800" in req.url
 
 
-def test_get_departures_batch_shaping_matches_single_stop():
+def test_get_departures_by_onestop_ids_shaping_matches_single_stop():
     with req_mock.Mocker() as m:
         m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
         single = proxy.get_departures(42, next_seconds=3600)
     with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_42)
         m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
-        batch = proxy.get_departures_batch([42], next_seconds=3600)
+        batch = proxy.get_departures_by_onestop_ids(["s-test-42"], next_seconds=3600)
 
     single_deps = single["departures"]
     batch_deps = batch["stops"][0]["departures"]
@@ -560,6 +605,24 @@ def test_shape_departures_is_used_by_get_departures():
     dep = result["departures"][0]
     assert dep["time_source"] == "LIVE"
     assert dep["live_departure_utc"] == "2099-01-01T12:03:00Z"
+
+
+def test_get_departures_by_onestop_ids_resolves_then_fetches():
+    # Verify that the resolve call uses the onestop_id param and departure
+    # calls use the resolved integer ID.
+    resolve = {
+        "stops": [{"id": 99, "onestop_id": "s-abc-mystation", "stop_name": "My Station", "geometry": {"coordinates": [-122.4, 37.8]}}]
+    }
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=resolve)
+        m.get("http://mock-transitland/stops/99/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures_by_onestop_ids(["s-abc-mystation"], next_seconds=3600)
+
+    assert result["stops"][0]["onestop_id"] == "s-abc-mystation"
+    assert len(result["stops"][0]["departures"]) > 0
+    # Resolve request should have included onestop_id param
+    resolve_req = m.request_history[0]
+    assert "onestop_id=s-abc-mystation" in resolve_req.url
 
 
 # ── Alert helpers ──────────────────────────────────────────────────────────────
@@ -608,10 +671,11 @@ def test_get_departures_sends_include_alerts():
         assert "include_alerts=true" in m.last_request.url
 
 
-def test_get_departures_batch_sends_include_alerts():
+def test_get_departures_by_onestop_ids_sends_include_alerts():
     with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json={"stops": [{"id": 10, "onestop_id": "s-test-10", "stop_name": "S", "geometry": {"coordinates": [-122.4, 37.8]}}]})
         m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        proxy.get_departures_batch([10], next_seconds=3600)
+        proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
         assert "include_alerts=true" in m.last_request.url
 
 
@@ -731,43 +795,29 @@ def test_get_departures_falls_back_to_first_non_empty_translation():
 
 # ── batch alert passthrough ────────────────────────────────────────────────────
 
-def test_get_departures_batch_includes_alerts_per_stop():
+def test_get_departures_by_onestop_ids_includes_alerts_per_stop():
     alert = _active_alert("Service change")
     data_with_alert = _departures_with_alerts(alert)
     with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_10_20)
         m.get("http://mock-transitland/stops/10/departures", json=data_with_alert)
         m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE)
-        result = proxy.get_departures_batch([10, 20], next_seconds=3600)
+        result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
-    stop10 = next(s for s in result["stops"] if s["stop_id"] == 10)
-    stop20 = next(s for s in result["stops"] if s["stop_id"] == 20)
+    stop10 = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
+    stop20 = next(s for s in result["stops"] if s["onestop_id"] == "s-test-20")
     assert len(stop10["alerts"]) == 1
     assert stop10["alerts"][0]["header_text"] == "Service change"
     assert stop20["alerts"] == []
 
 
-def test_get_departures_batch_alerts_key_present_when_no_alerts():
+def test_get_departures_by_onestop_ids_alerts_key_present_when_no_alerts():
     with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json={"stops": [{"id": 10, "onestop_id": "s-test-10", "stop_name": "S", "geometry": {"coordinates": [-122.4, 37.8]}}]})
         m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        result = proxy.get_departures_batch([10], next_seconds=3600)
+        result = proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
     assert "alerts" in result["stops"][0]
     assert result["stops"][0]["alerts"] == []
-
-
-def test_get_departures_batch_stale_false_when_stop_exists():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        result = proxy.get_departures_batch([10], next_seconds=3600)
-    assert result["stops"][0]["stale"] is False
-
-
-def test_get_departures_batch_stale_true_when_stop_not_found():
-    empty_response = {"stops": []}
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/99/departures", json=empty_response)
-        result = proxy.get_departures_batch([99], next_seconds=3600)
-    assert result["stops"][0]["stale"] is True
-    assert result["stops"][0]["departures"] == []
 
 
 # ── geocode ────────────────────────────────────────────────────────────────────

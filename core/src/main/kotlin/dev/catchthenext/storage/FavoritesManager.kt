@@ -7,7 +7,7 @@ interface FavoritesManager {
     fun getFavorites(): List<Stop>
     fun saveFavorites(stops: List<Stop>)
     fun addFavorite(stop: Stop)
-    fun removeFavorite(stopId: Long): Boolean
-    fun isFavorite(stopId: Long): Boolean
+    fun removeFavorite(onestopId: String): Boolean
+    fun isFavorite(onestopId: String): Boolean
     fun favoritesFlow(): Flow<List<Stop>>
 }

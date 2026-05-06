@@ -9,13 +9,12 @@ data class StopDepartures(
     val stopId: Long,
     val departures: List<Departure>,
     val alerts: List<Alert> = emptyList(),
-    val isStale: Boolean = false,
 )
 
 interface TransitApi {
     fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int = 600, limit: Int = 20): List<Stop>
     fun getDepartures(stopId: Long, nextSeconds: Int = 7200): StopDepartures
-    fun getDeparturesBatch(stopIds: List<Long>, nextSeconds: Int = 7200): Map<Long, StopDepartures>
+    fun getDeparturesBatch(onestopIds: List<String>, nextSeconds: Int = 7200): Map<String, StopDepartures>
     fun geocodePlace(
         query: String,
         focusLat: Double? = null,

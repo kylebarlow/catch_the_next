@@ -40,7 +40,7 @@ class StopDetailsViewModel(
                 val stop = favorites.firstOrNull { it.id == stopId }
                     ?: Stop(stopId, stopId.toString(), "Stop $stopId", 0.0, 0.0)
                 val stopDeps = getDepartures(stopId)
-                val isFav = favoritesManager.isFavorite(stopId)
+                val isFav = favoritesManager.isFavorite(stop.onestopId ?: "")
                 DetailsUi.Loaded(stop, stopDeps.departures, isFav, stopDeps.alerts)
             }.getOrElse { DetailsUi.Error(it.message ?: "Error loading departures") }
         }

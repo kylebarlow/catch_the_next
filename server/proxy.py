@@ -332,19 +332,35 @@ def get_departures(stop_id, next_seconds=7200):
 _BATCH_MAX_STOPS = 6
 
 
-def get_departures_batch(stop_ids, next_seconds=7200):
+def get_departures_by_onestop_ids(onestop_ids, next_seconds=7200):
     next_seconds = min(int(next_seconds), 86400)
+
+    # Batch-resolve stable onestop_ids to Transitland integer IDs
+    resolve_data = _upstream_get("stops", {
+        "onestop_id": ",".join(onestop_ids),
+        "limit": max(len(onestop_ids) * 2, 10),
+    })
+    onestop_to_int = {}
+    for s in resolve_data.get("stops", []):
+        oid = s.get("onestop_id")
+        iid = s.get("id")
+        if oid and iid and oid in onestop_ids:
+            onestop_to_int[oid] = iid
+
     stops = []
-    for stop_id in stop_ids:
+    for onestop_id in onestop_ids:
+        integer_id = onestop_to_int.get(onestop_id)
+        if integer_id is None:
+            stops.append({"onestop_id": onestop_id, "departures": [], "alerts": []})
+            continue
         data = _upstream_get(
-            f"stops/{stop_id}/departures",
+            f"stops/{integer_id}/departures",
             {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
         )
         stops.append({
-            "stop_id": stop_id,
+            "onestop_id": onestop_id,
             "departures": _shape_departures(data),
             "alerts": _shape_alerts(data),
-            "stale": not bool(data.get("stops")),
         })
     return {"stops": stops}
 

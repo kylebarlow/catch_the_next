@@ -93,7 +93,7 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                 }
-                                IconButton(onClick = { viewModel.removeFavorite(stop.id) }) {
+                                IconButton(onClick = { viewModel.removeFavorite(stop.onestopId ?: "") }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Remove")
                                 }
                             }

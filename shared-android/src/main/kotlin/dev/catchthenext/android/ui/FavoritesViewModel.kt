@@ -57,9 +57,9 @@ class FavoritesViewModel(
         }
     }
 
-    fun removeFavorite(stopId: Long) {
+    fun removeFavorite(onestopId: String) {
         viewModelScope.launch(ioDispatcher) {
-            favoritesManager.removeFavorite(stopId)
+            favoritesManager.removeFavorite(onestopId)
         }
     }
 
