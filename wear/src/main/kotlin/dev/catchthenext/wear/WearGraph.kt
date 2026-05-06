@@ -10,6 +10,7 @@ import dev.catchthenext.android.storage.AndroidFavoritesManager
 
 object WearGraph {
     @Volatile private var clientRef: TransitApi? = null
+    @Volatile private var favoritesManagerRef: AndroidFavoritesManager? = null
     @Volatile private var appCtx: Context? = null
     @Volatile var pendingConfirmStop: Stop? = null
 
@@ -27,6 +28,7 @@ object WearGraph {
         }.also { clientRef = it }
     }
 
-    fun favoritesManager(ctx: Context): AndroidFavoritesManager =
-        AndroidFavoritesManager(ctx.applicationContext)
+    fun favoritesManager(ctx: Context): AndroidFavoritesManager = favoritesManagerRef ?: synchronized(this) {
+        favoritesManagerRef ?: AndroidFavoritesManager(ctx.applicationContext).also { favoritesManagerRef = it }
+    }
 }

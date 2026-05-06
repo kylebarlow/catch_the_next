@@ -13,7 +13,7 @@ object FavoritesSyncForcer {
 
     /** Full bidirectional sync: pull, push our state, and ask peer to republish. For manual button. */
     suspend fun forceSync(context: Context, favoritesManager: FavoritesManager, metaStore: SyncMetadataStore) {
-        FavoritesSyncListener.coldStartReconcile(context, favoritesManager, metaStore)
+        FavoritesSyncListener.coldStartReconcile(context, favoritesManager, metaStore, force = true)
         FavoritesSyncPublisher.publishNow(context, favoritesManager, metaStore)
         sendRepublishToAllReachable(context)
     }

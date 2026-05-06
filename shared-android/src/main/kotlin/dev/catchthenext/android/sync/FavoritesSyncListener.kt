@@ -77,12 +77,12 @@ abstract class FavoritesSyncListener : WearableListenerService() {
         val meta = metaStore().read()
         val shouldApply = shouldApplyRemote(meta, peerNodeId, remoteVersion, remoteUpdatedAt)
         val lastApplied = meta.peerVersions[peerNodeId] ?: 0L
-        Log.d(TAG, "applyIfNewer: peer=$peerNodeId remoteV=$remoteVersion lastApplied=$lastApplied remoteT=$remoteUpdatedAt ownT=${meta.ownUpdatedAt} shouldApply=$shouldApply")
+        Log.d(TAG, "applyIfNewer: peer=$peerNodeId remoteV=$remoteVersion lastApplied=$lastApplied remoteT=$remoteUpdatedAt shouldApply=$shouldApply")
         if (!shouldApply) return
 
         val payload = FavoritesSyncPayload.fromJson(json) ?: return
         favoritesManager().saveFavorites(payload.favorites)
-        metaStore().writePeerVersion(peerNodeId, remoteVersion)
+        metaStore().writePeerVersion(peerNodeId, remoteVersion, remoteUpdatedAt)
     }
 
     companion object {
@@ -96,11 +96,20 @@ abstract class FavoritesSyncListener : WearableListenerService() {
             remoteUpdatedAt: Long,
         ): Boolean {
             val lastApplied = meta.peerVersions[peerNodeId] ?: 0L
+            val lastPeerTimestamp = meta.peerTimestamps[peerNodeId] ?: 0L
+            val havePeerTimestamp = meta.peerTimestamps.containsKey(peerNodeId)
             return when {
                 remoteVersion > lastApplied -> true
-                // Tiebreak: same logical version but peer has a newer wall-clock timestamp.
-                // Covers the republish-handshake case where peer re-publishes identical state.
-                remoteVersion == lastApplied && remoteUpdatedAt > meta.ownUpdatedAt -> true
+                // Counter reset: peer reinstalled and its version counter dropped below lastApplied.
+                // Trust the wall-clock — if remote's timestamp is ahead of the last we recorded,
+                // the data is genuinely newer. On migration (havePeerTimestamp=false), lastPeerTimestamp
+                // is 0 so any real timestamp passes, which is safe here since the versions differ.
+                remoteVersion < lastApplied && remoteUpdatedAt > lastPeerTimestamp -> true
+                // Republish handshake: same version, bumped timestamp. Only apply when we have a
+                // stored peer timestamp to compare against; if we don't (migration / first sync for
+                // this peer at this version), treat same-version as already-seen to avoid re-applying
+                // data the device already has.
+                remoteVersion == lastApplied && havePeerTimestamp && remoteUpdatedAt > lastPeerTimestamp -> true
                 else -> false
             }
         }
@@ -112,9 +121,10 @@ abstract class FavoritesSyncListener : WearableListenerService() {
             context: Context,
             favoritesManager: FavoritesManager,
             metaStore: SyncMetadataStore,
+            force: Boolean = false,
         ) {
             val now = System.currentTimeMillis()
-            if (now - lastReconcileAt < MIN_RECONCILE_INTERVAL_MS) {
+            if (!force && now - lastReconcileAt < MIN_RECONCILE_INTERVAL_MS) {
                 Log.d(TAG, "coldStartReconcile: skipping, last ran ${now - lastReconcileAt}ms ago")
                 return
             }
@@ -145,12 +155,12 @@ abstract class FavoritesSyncListener : WearableListenerService() {
                             val meta = metaStore.read()
                             val lastApplied = meta.peerVersions[peerNodeId] ?: 0L
                             val shouldApply = shouldApplyRemote(meta, peerNodeId, remoteVersion, remoteUpdatedAt)
-                            Log.d(TAG, "coldStartReconcile: peer=$peerNodeId remoteV=$remoteVersion lastApplied=$lastApplied remoteT=$remoteUpdatedAt ownT=${meta.ownUpdatedAt} shouldApply=$shouldApply json=${json.take(120)}")
+                            Log.d(TAG, "coldStartReconcile: peer=$peerNodeId remoteV=$remoteVersion lastApplied=$lastApplied remoteT=$remoteUpdatedAt shouldApply=$shouldApply json=${json.take(120)}")
                             if (shouldApply) {
                                 val payload = FavoritesSyncPayload.fromJson(json) ?: continue
                                 Log.d(TAG, "coldStartReconcile: applying ${payload.favorites.size} favorites")
                                 favoritesManager.saveFavorites(payload.favorites)
-                                metaStore.writePeerVersion(peerNodeId, remoteVersion)
+                                metaStore.writePeerVersion(peerNodeId, remoteVersion, remoteUpdatedAt)
                             }
                         }
                     }

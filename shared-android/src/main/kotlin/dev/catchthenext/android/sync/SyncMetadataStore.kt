@@ -16,6 +16,7 @@ data class SyncMetadata(
     val ownVersion: Long,
     val ownUpdatedAt: Long,
     val peerVersions: Map<String, Long>,
+    val peerTimestamps: Map<String, Long>,
     val publishPending: Boolean,
 )
 
@@ -23,6 +24,7 @@ class SyncMetadataStore(private val context: Context) {
     private val keyVersion = longPreferencesKey("local_version")
     private val keyUpdatedAt = longPreferencesKey("local_updated_at")
     private val keyPeerVersions = stringPreferencesKey("peer_versions_json")
+    private val keyPeerTimestamps = stringPreferencesKey("peer_timestamps_json")
     private val keyPublishPending = booleanPreferencesKey("publish_pending")
 
     private val gson = Gson()
@@ -34,10 +36,16 @@ class SyncMetadataStore(private val context: Context) {
                 gson.fromJson<Map<String, Long>>(json, object : TypeToken<Map<String, Long>>() {}.type)
             }.getOrNull()
         } ?: emptyMap()
+        val peerTimestamps: Map<String, Long> = prefs[keyPeerTimestamps]?.let { json ->
+            runCatching {
+                gson.fromJson<Map<String, Long>>(json, object : TypeToken<Map<String, Long>>() {}.type)
+            }.getOrNull()
+        } ?: emptyMap()
         return SyncMetadata(
             ownVersion = prefs[keyVersion] ?: 0L,
             ownUpdatedAt = prefs[keyUpdatedAt] ?: 0L,
             peerVersions = peerVersions,
+            peerTimestamps = peerTimestamps,
             publishPending = prefs[keyPublishPending] ?: false,
         )
     }
@@ -50,15 +58,21 @@ class SyncMetadataStore(private val context: Context) {
         }
     }
 
-    suspend fun writePeerVersion(nodeId: String, version: Long) {
+    suspend fun writePeerVersion(nodeId: String, version: Long, updatedAt: Long) {
         context.syncMetadataStore.edit { prefs ->
-            val existing: Map<String, Long> = prefs[keyPeerVersions]?.let { json ->
+            val existingVersions: Map<String, Long> = prefs[keyPeerVersions]?.let { json ->
                 runCatching {
                     gson.fromJson<Map<String, Long>>(json, object : TypeToken<Map<String, Long>>() {}.type)
                 }.getOrNull()
             } ?: emptyMap()
-            val updated = existing + (nodeId to version)
-            prefs[keyPeerVersions] = gson.toJson(updated)
+            prefs[keyPeerVersions] = gson.toJson(existingVersions + (nodeId to version))
+
+            val existingTimestamps: Map<String, Long> = prefs[keyPeerTimestamps]?.let { json ->
+                runCatching {
+                    gson.fromJson<Map<String, Long>>(json, object : TypeToken<Map<String, Long>>() {}.type)
+                }.getOrNull()
+            } ?: emptyMap()
+            prefs[keyPeerTimestamps] = gson.toJson(existingTimestamps + (nodeId to updatedAt))
         }
     }
 
