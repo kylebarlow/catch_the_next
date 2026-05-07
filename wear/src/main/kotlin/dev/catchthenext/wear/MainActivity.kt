@@ -44,8 +44,8 @@ import dev.catchthenext.wear.ui.SettingsScreen
 import dev.catchthenext.wear.ui.SettingsThresholdScreen
 import dev.catchthenext.wear.ui.StopConfirmScreen
 import dev.catchthenext.wear.ui.StopDetailsScreen
-import dev.catchthenext.android.sync.FavoritesSyncForcer
 import dev.catchthenext.android.sync.FavoritesSyncListener
+import dev.catchthenext.android.sync.FavoritesSyncPusher
 import dev.catchthenext.android.sync.SyncMetadataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -246,7 +246,8 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                 persistUnit = { store.setUnit(it) },
                 thresholdMetersFlow = store.thresholdMetersFlow,
                 persistThreshold = { store.setThresholdMeters(it) },
-                triggerSync = { FavoritesSyncForcer.forceSync(context, fm, meta) },
+                peerLabel = "phone",
+                pushToPeer = { FavoritesSyncPusher.pushToPeer(context, fm, meta) },
             ) as T
         }
         modelClass.isAssignableFrom(AboutViewModel::class.java) -> {

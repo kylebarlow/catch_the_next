@@ -14,7 +14,7 @@ class FavoritesSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWor
     override suspend fun doWork(): Result {
         val getFavorites = favoritesFactory ?: return Result.failure()
         val getMetaStore = metaStoreFactory ?: return Result.failure()
-        FavoritesSyncForcer.pullOnly(
+        FavoritesSyncListener.coldStartReconcile(
             applicationContext,
             getFavorites(applicationContext),
             getMetaStore(applicationContext),

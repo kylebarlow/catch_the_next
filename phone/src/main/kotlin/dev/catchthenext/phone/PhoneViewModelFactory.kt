@@ -25,7 +25,7 @@ import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.android.ui.FavoritesViewModel
 import dev.catchthenext.android.ui.PlaceSearchViewModel
 import dev.catchthenext.android.ui.SettingsViewModel
-import dev.catchthenext.android.sync.FavoritesSyncForcer
+import dev.catchthenext.android.sync.FavoritesSyncPusher
 import dev.catchthenext.android.sync.SyncMetadataStore
 import kotlinx.coroutines.flow.first
 
@@ -160,7 +160,8 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
                 persistUnit = { store.setUnit(it) },
                 thresholdMetersFlow = store.thresholdMetersFlow,
                 persistThreshold = { store.setThresholdMeters(it) },
-                triggerSync = { FavoritesSyncForcer.forceSync(context, fm, meta) },
+                peerLabel = "watch",
+                pushToPeer = { FavoritesSyncPusher.pushToPeer(context, fm, meta) },
             ) as T
         }
         modelClass.isAssignableFrom(AboutViewModel::class.java) -> {

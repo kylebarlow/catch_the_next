@@ -34,6 +34,11 @@ import dev.catchthenext.android.location.formatDistance
 import dev.catchthenext.android.storage.DistanceUnit
 import dev.catchthenext.android.ui.SettingsViewModel
 import dev.catchthenext.android.ui.SyncStatus
+import dev.catchthenext.android.ui.SyncStatus.IDLE
+import dev.catchthenext.android.ui.SyncStatus.PUSHING
+import dev.catchthenext.android.ui.SyncStatus.SENT
+import dev.catchthenext.android.ui.SyncStatus.PEER_UNREACHABLE
+import dev.catchthenext.android.ui.SyncStatus.ERROR
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -92,13 +97,21 @@ fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
             )
             HorizontalDivider()
             ListItem(
-                headlineContent = { Text("Watch sync") },
-                supportingContent = { if (syncStatus == SyncStatus.SYNCING) Text("Syncing…") },
+                headlineContent = { Text("Sync favorites to watch") },
+                supportingContent = {
+                    Text(when (syncStatus) {
+                        PUSHING -> "Sending…"
+                        SENT -> "Sent"
+                        PEER_UNREACHABLE -> "Watch unreachable"
+                        ERROR -> "Failed"
+                        IDLE -> "Replaces watch's list with this phone's list"
+                    })
+                },
                 trailingContent = {
                     TextButton(
                         onClick = { viewModel.syncNow() },
-                        enabled = syncStatus == SyncStatus.IDLE,
-                    ) { Text("Sync now") }
+                        enabled = syncStatus == IDLE,
+                    ) { Text("Send") }
                 }
             )
             HorizontalDivider()

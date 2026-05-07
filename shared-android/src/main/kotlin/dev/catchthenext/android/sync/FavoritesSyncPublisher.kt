@@ -15,30 +15,37 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 private const val TAG = "FavSync"
-
 private const val KEY_PAYLOAD = "payload"
 private const val KEY_UPDATED_AT = "updatedAt"
-private const val KEY_VERSION = "version"
-private const val DEBOUNCE_MS = 250L
+private const val DEBOUNCE_MS = 500L
 
 object FavoritesSyncPublisher {
     @Volatile private var debounce: Job? = null
     @Volatile private var attached = false
+
+    // Content hash of the last list we successfully published. Used to suppress redundant
+    // re-publishes when the listener applies a remote payload (which writes to local DataStore,
+    // causing the flow to re-emit the same content we just received).
+    @Volatile private var lastPublishedHash: Int = 0
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun attach(context: Context, favoritesManager: FavoritesManager, metaStore: SyncMetadataStore) {
         if (attached) return
         attached = true
         scope.launch {
-            var seenFirst = false
             favoritesManager.favoritesFlow().distinctUntilChanged().collect { favorites ->
-                if (!seenFirst) {
-                    seenFirst = true
-                    // Skip the initial emission if favorites are empty — the app just started and
-                    // has nothing to contribute. Subsequent changes (sync or user action) are
-                    // still published. This prevents overwriting the other device's data on startup.
-                    if (favorites.isEmpty()) return@collect
-                }
+                // Echo guard: skip if this is the same list we already published — the emission
+                // was caused by the listener writing back a remote payload we just received.
+                val hash = favorites.hashCode()
+                if (hash == lastPublishedHash) return@collect
+
+                // Empty-publish guard: don't publish an empty list on a fresh install.
+                // Once the device has ever published (localUpdatedAt > 0), publishing empty means
+                // the user deliberately cleared their favorites and the peer should learn that.
+                val meta = metaStore.read()
+                if (favorites.isEmpty() && meta.localUpdatedAt == 0L) return@collect
+
                 debounce?.cancel()
                 debounce = launch {
                     delay(DEBOUNCE_MS)
@@ -48,20 +55,9 @@ object FavoritesSyncPublisher {
         }
     }
 
-    /** Publish immediately, bypassing the debounce. Used by the republish handshake. */
-    suspend fun publishNow(context: Context, favoritesManager: FavoritesManager, metaStore: SyncMetadataStore) {
-        publish(context, favoritesManager, metaStore)
-    }
-
-    /**
-     * If a previous putDataItem failed, retry it now. Called from coldStartReconcile and
-     * CapabilityWatcher when the peer becomes reachable.
-     */
-    suspend fun retryPendingIfNeeded(context: Context, favoritesManager: FavoritesManager, metaStore: SyncMetadataStore) {
-        if (metaStore.read().publishPending) {
-            Log.d(TAG, "retryPendingIfNeeded: pending publish found, retrying")
-            publish(context, favoritesManager, metaStore)
-        }
+    /** Mark a list as published without going through the flow path. Called by FavoritesSyncPusher. */
+    fun markPublished(hash: Int) {
+        lastPublishedHash = hash
     }
 
     private suspend fun publish(
@@ -69,36 +65,22 @@ object FavoritesSyncPublisher {
         favoritesManager: FavoritesManager,
         metaStore: SyncMetadataStore,
     ) {
-        val meta = metaStore.read()
-        val newVersion = meta.ownVersion + 1
         val updatedAt = System.currentTimeMillis()
-
-        val payload = FavoritesSyncPayload(
-            favorites = favoritesManager.getFavorites(),
-            updatedAt = updatedAt,
-            version = newVersion,
-        )
+        val favorites = favoritesManager.getFavorites()
+        val payload = FavoritesSyncPayload(favorites = favorites, updatedAt = updatedAt)
 
         val request = PutDataMapRequest.create(PATH_FAVORITES).apply {
             dataMap.putString(KEY_PAYLOAD, payload.toJson())
             dataMap.putLong(KEY_UPDATED_AT, updatedAt)
-            dataMap.putLong(KEY_VERSION, newVersion)
         }.asPutDataRequest().setUrgent()
 
-        // Only bump local version after the Data Layer accepts the item.
-        // putDataItem queues delivery even when the peer is disconnected (that case succeeds
-        // locally and syncs on reconnect). It only fails if Play Services itself is unavailable.
-        // Keeping the version at ownVersion on failure means future remote updates are not
-        // wrongly rejected as "older."
         val result = runCatching {
             Wearable.getDataClient(context).putDataItem(request).await()
         }
-        val succeeded = result.isSuccess
-        Log.d(TAG, "publish: version=$newVersion favorites=${payload.favorites.size} succeeded=$succeeded err=${result.exceptionOrNull()?.message}")
-        if (succeeded) {
-            metaStore.writeOwn(newVersion, updatedAt)
-        } else {
-            metaStore.setPublishPending(true)
+        Log.d(TAG, "publish: favorites=${favorites.size} succeeded=${result.isSuccess} err=${result.exceptionOrNull()?.message}")
+        if (result.isSuccess) {
+            metaStore.writeLocalUpdatedAt(updatedAt)
+            lastPublishedHash = favorites.hashCode()
         }
     }
 }

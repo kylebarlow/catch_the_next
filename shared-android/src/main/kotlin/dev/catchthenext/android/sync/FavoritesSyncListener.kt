@@ -1,6 +1,7 @@
 package dev.catchthenext.android.sync
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
@@ -17,16 +18,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.tasks.await
 
 private const val TAG = "FavSync"
-
 private const val KEY_PAYLOAD = "payload"
 private const val KEY_UPDATED_AT = "updatedAt"
-private const val KEY_VERSION = "version"
 
-// Last-write-wins conflict resolution limitation:
-// If both phone and watch edit favorites while disconnected, the side that syncs LAST wins.
-// The other side's additions or removals are silently dropped. This is acceptable for a transit
-// favorites app where simultaneous offline edits are rare and the data set is small. A proper
-// CRDT (OR-Set tombstone model) would avoid this but adds significant schema complexity.
+// Conflict resolution: pure wall-clock LWW. If both phone and watch edit favorites while
+// disconnected, whichever device has the more recent wall-clock timestamp wins. Simultaneous
+// offline edits are rare for a transit favorites app; the simplicity tradeoff is intentional.
 abstract class FavoritesSyncListener : WearableListenerService() {
     protected abstract fun favoritesManager(): FavoritesManager
     protected abstract fun metaStore(): SyncMetadataStore
@@ -37,105 +34,64 @@ abstract class FavoritesSyncListener : WearableListenerService() {
         Log.d(TAG, "onDataChanged fired")
         events.use { buffer ->
             for (event in buffer) {
-                Log.d(TAG, "event type=${event.type} path=${event.dataItem.uri.path}")
                 if (event.type == DataEvent.TYPE_CHANGED &&
                     event.dataItem.uri.path == PATH_FAVORITES
                 ) {
                     val map = DataMapItem.fromDataItem(event.dataItem).dataMap
                     val json = map.getString(KEY_PAYLOAD) ?: continue
-                    val remoteVersion = map.getLong(KEY_VERSION)
                     val remoteUpdatedAt = map.getLong(KEY_UPDATED_AT)
-                    // uri.host is the publisher's node ID — free from the Data Layer without
-                    // embedding it in the payload.
                     val peerNodeId = event.dataItem.uri.host ?: continue
-                    Log.d(TAG, "onDataChanged: peerNode=$peerNodeId remoteVersion=$remoteVersion")
-                    scope.launch { applyIfNewer(json, peerNodeId, remoteVersion, remoteUpdatedAt) }
+                    Log.d(TAG, "onDataChanged: peer=$peerNodeId remoteTs=$remoteUpdatedAt")
+                    scope.launch { applyIfNewer(json, remoteUpdatedAt) }
                 }
             }
         }
     }
 
     override fun onMessageReceived(event: MessageEvent) {
-        if (event.path == PATH_SYNC_REQUEST_REPUBLISH) {
-            Log.d(TAG, "onMessageReceived: republish request from ${event.sourceNodeId}")
-            scope.launch {
-                FavoritesSyncPublisher.publishNow(
-                    this@FavoritesSyncListener,
-                    favoritesManager(),
-                    metaStore(),
-                )
-            }
+        if (event.path == PATH_REPLACE_WITH_MINE) {
+            Log.d(TAG, "onMessageReceived: replace-with-mine from ${event.sourceNodeId}")
+            scope.launch { applyForcedReplace(event.data) }
         }
     }
 
-    private suspend fun applyIfNewer(
-        json: String,
-        peerNodeId: String,
-        remoteVersion: Long,
-        remoteUpdatedAt: Long,
-    ) {
+    private suspend fun applyIfNewer(json: String, remoteUpdatedAt: Long) {
         val meta = metaStore().read()
-        val shouldApply = shouldApplyRemote(meta, peerNodeId, remoteVersion, remoteUpdatedAt)
-        val lastApplied = meta.peerVersions[peerNodeId] ?: 0L
-        Log.d(TAG, "applyIfNewer: peer=$peerNodeId remoteV=$remoteVersion lastApplied=$lastApplied remoteT=$remoteUpdatedAt shouldApply=$shouldApply")
+        val shouldApply = remoteUpdatedAt > meta.localUpdatedAt
+        Log.d(TAG, "applyIfNewer: remoteTs=$remoteUpdatedAt localTs=${meta.localUpdatedAt} apply=$shouldApply")
         if (!shouldApply) return
-
         val payload = FavoritesSyncPayload.fromJson(json) ?: return
+        Log.d(TAG, "applyIfNewer: applying ${payload.favorites.size} favorites")
         favoritesManager().saveFavorites(payload.favorites)
-        metaStore().writePeerVersion(peerNodeId, remoteVersion, remoteUpdatedAt)
+        metaStore().writeLocalUpdatedAt(remoteUpdatedAt)
+    }
+
+    private suspend fun applyForcedReplace(rawData: ByteArray) {
+        val payload = FavoritesSyncPayload.fromBytes(rawData) ?: run {
+            Log.w(TAG, "applyForcedReplace: failed to parse payload")
+            return
+        }
+        Log.d(TAG, "applyForcedReplace: replacing with ${payload.favorites.size} favorites")
+        favoritesManager().saveFavorites(payload.favorites)
+        metaStore().writeLocalUpdatedAt(payload.updatedAt)
     }
 
     companion object {
         private val reconcileMutex = Mutex()
-        private const val MIN_RECONCILE_INTERVAL_MS = 5_000L
-
-        internal fun shouldApplyRemote(
-            meta: SyncMetadata,
-            peerNodeId: String,
-            remoteVersion: Long,
-            remoteUpdatedAt: Long,
-        ): Boolean {
-            val lastApplied = meta.peerVersions[peerNodeId] ?: 0L
-            val lastPeerTimestamp = meta.peerTimestamps[peerNodeId] ?: 0L
-            val havePeerTimestamp = meta.peerTimestamps.containsKey(peerNodeId)
-            return when {
-                remoteVersion > lastApplied -> true
-                // Counter reset: peer reinstalled and its version counter dropped below lastApplied.
-                // Trust the wall-clock — if remote's timestamp is ahead of the last we recorded,
-                // the data is genuinely newer. On migration (havePeerTimestamp=false), lastPeerTimestamp
-                // is 0 so any real timestamp passes, which is safe here since the versions differ.
-                remoteVersion < lastApplied && remoteUpdatedAt > lastPeerTimestamp -> true
-                // Republish handshake: same version, bumped timestamp. Only apply when we have a
-                // stored peer timestamp to compare against; if we don't (migration / first sync for
-                // this peer at this version), treat same-version as already-seen to avoid re-applying
-                // data the device already has.
-                remoteVersion == lastApplied && havePeerTimestamp && remoteUpdatedAt > lastPeerTimestamp -> true
-                else -> false
-            }
-        }
-
-        // Volatile is enough here: only written under mutex, but reads outside it need visibility.
-        @Volatile private var lastReconcileAt = 0L
 
         suspend fun coldStartReconcile(
             context: Context,
             favoritesManager: FavoritesManager,
             metaStore: SyncMetadataStore,
-            force: Boolean = false,
         ) {
-            val now = System.currentTimeMillis()
-            if (!force && now - lastReconcileAt < MIN_RECONCILE_INTERVAL_MS) {
-                Log.d(TAG, "coldStartReconcile: skipping, last ran ${now - lastReconcileAt}ms ago")
-                return
-            }
             if (!reconcileMutex.tryLock()) {
-                Log.d(TAG, "coldStartReconcile: skipping, already in progress")
+                Log.d(TAG, "coldStartReconcile: already in progress, skipping")
                 return
             }
-            lastReconcileAt = now
             try {
-                // Retry any pending publish before pulling remote state.
-                FavoritesSyncPublisher.retryPendingIfNeeded(context, favoritesManager, metaStore)
+                val localNodeId = runCatching {
+                    Wearable.getNodeClient(context).localNode.await().id
+                }.getOrNull()
 
                 runCatching {
                     Log.d(TAG, "coldStartReconcile: querying $URI_FAVORITES")
@@ -144,23 +100,21 @@ abstract class FavoritesSyncListener : WearableListenerService() {
                         .await()
                     items.use { buffer ->
                         Log.d(TAG, "coldStartReconcile: got ${buffer.count} items")
+                        val meta = metaStore.read()
                         for (item in buffer) {
                             val peerNodeId = item.uri.host ?: continue
-                            Log.d(TAG, "coldStartReconcile: item uri=${item.uri}")
+                            if (peerNodeId == localNodeId) continue  // skip own published item
                             if (item.uri.path != PATH_FAVORITES) continue
                             val map = DataMapItem.fromDataItem(item).dataMap
                             val json = map.getString(KEY_PAYLOAD) ?: continue
-                            val remoteVersion = map.getLong(KEY_VERSION)
                             val remoteUpdatedAt = map.getLong(KEY_UPDATED_AT)
-                            val meta = metaStore.read()
-                            val lastApplied = meta.peerVersions[peerNodeId] ?: 0L
-                            val shouldApply = shouldApplyRemote(meta, peerNodeId, remoteVersion, remoteUpdatedAt)
-                            Log.d(TAG, "coldStartReconcile: peer=$peerNodeId remoteV=$remoteVersion lastApplied=$lastApplied remoteT=$remoteUpdatedAt shouldApply=$shouldApply json=${json.take(120)}")
+                            val shouldApply = remoteUpdatedAt > meta.localUpdatedAt
+                            Log.d(TAG, "coldStartReconcile: peer=$peerNodeId remoteTs=$remoteUpdatedAt localTs=${meta.localUpdatedAt} apply=$shouldApply")
                             if (shouldApply) {
                                 val payload = FavoritesSyncPayload.fromJson(json) ?: continue
                                 Log.d(TAG, "coldStartReconcile: applying ${payload.favorites.size} favorites")
                                 favoritesManager.saveFavorites(payload.favorites)
-                                metaStore.writePeerVersion(peerNodeId, remoteVersion, remoteUpdatedAt)
+                                metaStore.writeLocalUpdatedAt(remoteUpdatedAt)
                             }
                         }
                     }

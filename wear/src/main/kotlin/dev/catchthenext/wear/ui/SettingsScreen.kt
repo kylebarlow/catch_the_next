@@ -21,9 +21,11 @@ fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
     val unit by viewModel.distanceUnit.collectAsState()
     val thresholdMeters by viewModel.thresholdMeters.collectAsState()
     val syncStatus by viewModel.syncStatus.collectAsState()
-    val syncStatusText = when (syncStatus) {
-        SyncStatus.SYNCING -> "Syncing…"
-        SyncStatus.SUCCESS -> "Synced"
+    val syncChipLabel = "Sync favorites to ${viewModel.peerLabel.ifEmpty { "peer" }}"
+    val syncSecondaryLabel = when (syncStatus) {
+        SyncStatus.PUSHING -> "Sending…"
+        SyncStatus.SENT -> "Sent"
+        SyncStatus.PEER_UNREACHABLE -> "${viewModel.peerLabel.replaceFirstChar { it.uppercase() }} unreachable".trimStart()
         SyncStatus.ERROR -> "Failed"
         SyncStatus.IDLE -> ""
     }
@@ -62,8 +64,8 @@ fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
             Chip(
                 onClick = { viewModel.syncNow() },
                 enabled = syncStatus == SyncStatus.IDLE,
-                label = { Text("Sync now") },
-                secondaryLabel = { if (syncStatusText.isNotEmpty()) Text(syncStatusText) },
+                label = { Text(syncChipLabel) },
+                secondaryLabel = { if (syncSecondaryLabel.isNotEmpty()) Text(syncSecondaryLabel) },
                 colors = ChipDefaults.secondaryChipColors(),
             )
         }
