@@ -3,6 +3,7 @@ import math
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import requests
 import bottle
 from config import load_config
@@ -335,33 +336,32 @@ _BATCH_MAX_STOPS = 6
 def get_departures_by_onestop_ids(onestop_ids, next_seconds=7200):
     next_seconds = min(int(next_seconds), 86400)
 
-    # Batch-resolve stable onestop_ids to Transitland integer IDs
-    resolve_data = _upstream_get("stops", {
-        "onestop_id": ",".join(onestop_ids),
-        "limit": max(len(onestop_ids) * 2, 10),
-    })
-    onestop_to_int = {}
-    for s in resolve_data.get("stops", []):
-        oid = s.get("onestop_id")
-        iid = s.get("id")
-        if oid and iid and oid in onestop_ids:
-            onestop_to_int[oid] = iid
+    # Transitland's /stops endpoint takes a single onestop_id per call (a
+    # comma-joined value matches nothing), so resolve each id in parallel.
+    def _resolve(oid):
+        data = _upstream_get("stops", {"onestop_id": oid, "limit": 1})
+        for s in data.get("stops", []):
+            if s.get("onestop_id") == oid and s.get("id"):
+                return oid, s["id"]
+        return oid, None
 
-    stops = []
-    for onestop_id in onestop_ids:
-        integer_id = onestop_to_int.get(onestop_id)
+    def _fetch(oid_iid):
+        oid, integer_id = oid_iid
         if integer_id is None:
-            stops.append({"onestop_id": onestop_id, "departures": [], "alerts": []})
-            continue
+            return {"onestop_id": oid, "departures": [], "alerts": []}
         data = _upstream_get(
             f"stops/{integer_id}/departures",
             {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
         )
-        stops.append({
-            "onestop_id": onestop_id,
+        return {
+            "onestop_id": oid,
             "departures": _shape_departures(data),
             "alerts": _shape_alerts(data),
-        })
+        }
+
+    with ThreadPoolExecutor(max_workers=max(len(onestop_ids), 1)) as pool:
+        resolved = list(pool.map(_resolve, onestop_ids))
+        stops = list(pool.map(_fetch, resolved))
     return {"stops": stops}
 
 

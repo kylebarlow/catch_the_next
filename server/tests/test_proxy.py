@@ -625,6 +625,45 @@ def test_get_departures_by_onestop_ids_resolves_then_fetches():
     assert "onestop_id=s-abc-mystation" in resolve_req.url
 
 
+def test_get_departures_by_onestop_ids_resolves_each_id_individually():
+    # Regression: Transitland's /stops endpoint takes a single onestop_id value;
+    # comma-joining produces zero matches and returns empty departures for every
+    # stop. The resolve step MUST issue one upstream call per id, each with a
+    # single value (no comma).
+    def _resolve_response(request, context):
+        # Mirror real Transitland behavior: only return the stop whose
+        # onestop_id matches exactly. Comma-joined queries match nothing.
+        oid = request.qs.get("onestop_id", [""])[0]
+        catalog = {
+            "s-test-10": {"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}},
+            "s-test-20": {"id": 20, "onestop_id": "s-test-20", "stop_name": "Stop 20", "geometry": {"coordinates": [-122.4, 37.8]}},
+        }
+        stop = catalog.get(oid)
+        return {"stops": [stop] if stop else []}
+
+    with req_mock.Mocker() as m:
+        m.get("http://mock-transitland/stops", json=_resolve_response)
+        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+        m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE)
+        result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
+
+    resolve_calls = [r for r in m.request_history if r.path.endswith("/stops")]
+    assert len(resolve_calls) == 2, (
+        f"expected one resolve call per onestop_id; got {len(resolve_calls)}: "
+        f"{[r.url for r in resolve_calls]}"
+    )
+    for r in resolve_calls:
+        oid_values = r.qs.get("onestop_id", [])
+        assert len(oid_values) == 1, f"expected single onestop_id, got {oid_values}"
+        assert "," not in oid_values[0], (
+            f"onestop_id must not be comma-joined; upstream returns no matches: {oid_values[0]}"
+        )
+
+    assert len(result["stops"]) == 2
+    assert len(result["stops"][0]["departures"]) > 0
+    assert len(result["stops"][1]["departures"]) > 0
+
+
 # ── Alert helpers ──────────────────────────────────────────────────────────────
 
 _PAST = 1_000_000      # well before "now" in tests
