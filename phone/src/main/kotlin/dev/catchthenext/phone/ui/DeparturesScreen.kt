@@ -123,14 +123,14 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
                 is DeparturesUi.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                is DeparturesUi.Loaded -> DeparturesContent(state.tileState, state.isRefreshing, navController)
+                is DeparturesUi.Loaded -> DeparturesContent(state.tileState, navController)
             }
         }
     }
 }
 
 @Composable
-private fun DeparturesContent(state: TileState, isRefreshing: Boolean, navController: NavController) {
+private fun DeparturesContent(state: TileState, navController: NavController) {
     Box(modifier = Modifier.fillMaxSize()) {
         when (state) {
             is TileState.NoPermission -> CenteredMessage("Location permission required")
@@ -145,14 +145,6 @@ private fun DeparturesContent(state: TileState, isRefreshing: Boolean, navContro
             is TileState.NoLocation -> CenteredMessage("Getting location…")
             is TileState.NetworkError -> CenteredMessage("Network error: ${state.message}")
             is TileState.Ready -> ReadyContent(state)
-        }
-        if (isRefreshing) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                CircularProgressIndicator(modifier = Modifier.padding(top = 16.dp).size(24.dp), strokeWidth = 2.dp)
-            }
         }
     }
 }
