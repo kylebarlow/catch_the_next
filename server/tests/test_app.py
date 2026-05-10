@@ -53,18 +53,18 @@ def test_batch_departures_rejects_missing_stop_ids(mock_upstream):
 @patch("proxy._upstream_get")
 def test_batch_departures_rejects_malformed_ids(mock_upstream):
     testapp = app
-    captured, body = _call(testapp, "/api/v2/rest/departures", query="stop_ids=abc,123")
+    captured, body = _call(testapp, "/api/v2/rest/departures", query="onestop_ids=,,,")
     assert captured["status"].startswith("400")
     result = json.loads(body)
     assert result["error"] == "bad_request"
-    assert "comma-separated integers" in result["detail"]
+    assert "onestop_ids" in result["detail"]
 
 
 @patch("proxy._upstream_get")
 def test_batch_departures_rejects_too_many_ids(mock_upstream):
     testapp = app
-    ids = ",".join(str(i) for i in range(10))
-    captured, body = _call(testapp, "/api/v2/rest/departures", query=f"stop_ids={ids}")
+    ids = ",".join(f"s-id{i}" for i in range(10))
+    captured, body = _call(testapp, "/api/v2/rest/departures", query=f"onestop_ids={ids}")
     assert captured["status"].startswith("400")
     result = json.loads(body)
     assert result["error"] == "bad_request"
@@ -77,7 +77,7 @@ def test_batch_departures_accepts_valid_request(mock_upstream):
         "stops": [{"departures": [], "children": []}]
     }
     testapp = app
-    captured, body = _call(testapp, "/api/v2/rest/departures", query="stop_ids=10,20")
+    captured, body = _call(testapp, "/api/v2/rest/departures", query="onestop_ids=s-abc,s-def")
     assert captured["status"].startswith("200")
     result = json.loads(body)
     assert "stops" in result

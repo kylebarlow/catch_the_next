@@ -14,12 +14,14 @@ def _mock_request(key=None):
     return mock
 
 
+@patch("auth._valid_keys", ["key-one", "key-two"])
 def test_valid_first_key():
     with patch("auth.bottle.request", _mock_request("key-one")):
         prefix = check_auth()
     assert prefix == "key-on"
 
 
+@patch("auth._valid_keys", ["key-one", "key-two"])
 def test_valid_second_key():
     with patch("auth.bottle.request", _mock_request("key-two")):
         prefix = check_auth()
@@ -49,6 +51,7 @@ def test_require_auth_blocks_missing_key():
     assert exc_info.value.status_code == 401
 
 
+@patch("auth._valid_keys", ["key-one", "key-two"])
 def test_require_auth_allows_valid_key():
     @require_auth
     def handler():
