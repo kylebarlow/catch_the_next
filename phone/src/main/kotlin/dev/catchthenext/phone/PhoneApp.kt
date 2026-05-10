@@ -2,11 +2,11 @@ package dev.catchthenext.phone
 
 import android.app.Application
 import androidx.glance.appwidget.updateAll
+import dev.catchthenext.android.storage.AndroidFavoritesManager
 import dev.catchthenext.android.sync.CapabilityWatcher
 import dev.catchthenext.android.sync.FavoritesSyncListener
 import dev.catchthenext.android.sync.FavoritesSyncPublisher
 import dev.catchthenext.android.sync.FavoritesSyncWorker
-import dev.catchthenext.android.sync.SyncMetadataStore
 import dev.catchthenext.android.tile.DepartureWorker
 import dev.catchthenext.android.tile.DeparturesRefreshCallbacks
 import dev.catchthenext.phone.widget.DeparturesWidget
@@ -27,17 +27,16 @@ class PhoneApp : Application() {
         }
         DepartureWorker.schedule(this)
 
-        val mgr = PhoneGraph.favoritesManager(this)
-        val meta = SyncMetadataStore(this)
-        FavoritesSyncPublisher.attach(this, mgr, meta)
-        CapabilityWatcher.start(this, mgr, meta)
-        CoroutineScope(Dispatchers.IO).launch {
-            FavoritesSyncListener.coldStartReconcile(this@PhoneApp, mgr, meta)
-        }
-        FavoritesSyncWorker.configure(
-            getFavorites = { ctx -> PhoneGraph.favoritesManager(ctx) },
-            getMetaStore = { ctx -> SyncMetadataStore(ctx) },
-        )
+        val store = PhoneGraph.syncStateStore(this)
+        FavoritesSyncPublisher.attach(this, store)
+        CapabilityWatcher.start(this, store)
+        FavoritesSyncWorker.configure(getStore = { ctx -> PhoneGraph.syncStateStore(ctx) })
         FavoritesSyncWorker.schedule(this)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            val legacy = AndroidFavoritesManager(this@PhoneApp).getFavorites()
+            store.initFromContext(this@PhoneApp, legacy)
+            FavoritesSyncListener.coldStartReconcile(this@PhoneApp, store)
+        }
     }
 }

@@ -1,7 +1,6 @@
 package dev.catchthenext.android.ui
 
 import app.cash.turbine.test
-import dev.catchthenext.android.sync.PushResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -25,7 +24,8 @@ class SettingsViewModelTest {
 
     private fun makeVm(
         peerLabel: String = "watch",
-        pushToPeer: suspend () -> PushResult = { PushResult.Sent },
+        doSync: suspend () -> Unit = {},
+        peerReachable: Boolean = true,
     ): SettingsViewModel {
         return SettingsViewModel(
             distanceUnitFlow = flowOf(),
@@ -33,65 +33,53 @@ class SettingsViewModelTest {
             thresholdMetersFlow = flowOf(),
             persistThreshold = {},
             peerLabel = peerLabel,
-            pushToPeer = pushToPeer,
+            doSync = doSync,
+            peerReachableFlow = flowOf(peerReachable),
             ioDispatcher = testDispatcher,
         )
     }
 
-    @Test fun `syncNow transitions IDLE to PUSHING to SENT then back to IDLE`() = runTest {
-        val vm = makeVm(pushToPeer = { delay(100); PushResult.Sent })
+    @Test fun `syncNow transitions IDLE to SYNCING to DONE then back to IDLE`() = runTest {
+        val vm = makeVm(doSync = { delay(100) })
         vm.syncStatus.test {
             assertEquals(SyncStatus.IDLE, awaitItem())
             vm.syncNow()
-            assertEquals(SyncStatus.PUSHING, awaitItem())
+            assertEquals(SyncStatus.SYNCING, awaitItem())
             advanceTimeBy(101)
-            assertEquals(SyncStatus.SENT, awaitItem())
+            assertEquals(SyncStatus.DONE, awaitItem())
             advanceTimeBy(2_001)
             assertEquals(SyncStatus.IDLE, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }
 
-    @Test fun `syncNow emits Sent to peer event on success`() = runTest {
-        val vm = makeVm(peerLabel = "watch", pushToPeer = { delay(1); PushResult.Sent })
+    @Test fun `syncNow emits Synced event on success when peer reachable`() = runTest {
+        val vm = makeVm(peerLabel = "watch", doSync = { delay(1) }, peerReachable = true)
         vm.syncEvents.test {
             vm.syncNow()
             advanceTimeBy(2)
-            assertEquals("Sent to watch", awaitItem())
+            assertEquals("Synced", awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }
 
-    @Test fun `syncNow transitions to PEER_UNREACHABLE when peer is not reachable`() = runTest {
-        val vm = makeVm(pushToPeer = { delay(100); PushResult.PeerUnreachable })
-        vm.syncStatus.test {
-            assertEquals(SyncStatus.IDLE, awaitItem())
-            vm.syncNow()
-            assertEquals(SyncStatus.PUSHING, awaitItem())
-            advanceTimeBy(101)
-            assertEquals(SyncStatus.PEER_UNREACHABLE, awaitItem())
-            advanceTimeBy(2_001)
-            assertEquals(SyncStatus.IDLE, awaitItem())
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test fun `syncNow emits peer unreachable event with label`() = runTest {
-        val vm = makeVm(peerLabel = "phone", pushToPeer = { delay(1); PushResult.PeerUnreachable })
+    @Test fun `syncNow emits offline suffix when peer not reachable`() = runTest {
+        val vm = makeVm(peerLabel = "watch", doSync = { delay(1) }, peerReachable = false)
         vm.syncEvents.test {
             vm.syncNow()
             advanceTimeBy(2)
-            assertEquals("phone unreachable", awaitItem())
+            val event = awaitItem()
+            assertTrue(event.contains("offline"))
             cancelAndIgnoreRemainingEvents()
         }
     }
 
-    @Test fun `syncNow transitions to ERROR when pushToPeer returns Failed`() = runTest {
-        val vm = makeVm(pushToPeer = { delay(100); PushResult.Failed("network error") })
+    @Test fun `syncNow transitions to ERROR when doSync throws`() = runTest {
+        val vm = makeVm(doSync = { delay(100); error("network error") })
         vm.syncStatus.test {
             assertEquals(SyncStatus.IDLE, awaitItem())
             vm.syncNow()
-            assertEquals(SyncStatus.PUSHING, awaitItem())
+            assertEquals(SyncStatus.SYNCING, awaitItem())
             advanceTimeBy(101)
             assertEquals(SyncStatus.ERROR, awaitItem())
             advanceTimeBy(2_001)
@@ -100,27 +88,21 @@ class SettingsViewModelTest {
         }
     }
 
-    @Test fun `syncNow transitions to ERROR when pushToPeer throws`() = runTest {
-        val vm = makeVm(pushToPeer = { delay(100); error("unexpected crash") })
-        vm.syncStatus.test {
-            assertEquals(SyncStatus.IDLE, awaitItem())
+    @Test fun `syncNow emits Failed event with message on error`() = runTest {
+        val vm = makeVm(doSync = { delay(1); error("timeout") })
+        vm.syncEvents.test {
             vm.syncNow()
-            assertEquals(SyncStatus.PUSHING, awaitItem())
-            advanceTimeBy(101)
-            assertEquals(SyncStatus.ERROR, awaitItem())
-            advanceTimeBy(2_001)
-            assertEquals(SyncStatus.IDLE, awaitItem())
+            advanceTimeBy(2)
+            val event = awaitItem()
+            assertTrue(event.contains("timeout"))
             cancelAndIgnoreRemainingEvents()
         }
     }
 
-    @Test fun `syncNow emits Failed event with reason`() = runTest {
-        val vm = makeVm(pushToPeer = { delay(1); PushResult.Failed("timeout") })
-        vm.syncEvents.test {
-            vm.syncNow()
-            advanceTimeBy(2)
-            assertEquals("Failed: timeout", awaitItem())
-            cancelAndIgnoreRemainingEvents()
-        }
+    @Test fun `peerReachable reflects provided flow`() = runTest {
+        val vm = makeVm(peerReachable = false)
+        assertEquals(false, vm.peerReachable.value)
     }
+
+    private fun assertTrue(condition: Boolean) = org.junit.jupiter.api.Assertions.assertTrue(condition)
 }

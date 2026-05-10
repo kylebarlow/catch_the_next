@@ -3,14 +3,16 @@ package dev.catchthenext.wear
 import android.content.Context
 import dev.catchthenext.android.storage.AttributionRecordingClient
 import dev.catchthenext.android.storage.AttributionStore
+import dev.catchthenext.android.storage.SyncedFavoritesManager
+import dev.catchthenext.android.sync.SyncStateStore
 import dev.catchthenext.api.TransitApi
 import dev.catchthenext.api.TransitlandClient
 import dev.catchthenext.model.Stop
-import dev.catchthenext.android.storage.AndroidFavoritesManager
 
 object WearGraph {
     @Volatile private var clientRef: TransitApi? = null
-    @Volatile private var favoritesManagerRef: AndroidFavoritesManager? = null
+    @Volatile private var syncStateStoreRef: SyncStateStore? = null
+    @Volatile private var favoritesManagerRef: SyncedFavoritesManager? = null
     @Volatile private var appCtx: Context? = null
     @Volatile var pendingConfirmStop: Stop? = null
 
@@ -28,7 +30,11 @@ object WearGraph {
         }.also { clientRef = it }
     }
 
-    fun favoritesManager(ctx: Context): AndroidFavoritesManager = favoritesManagerRef ?: synchronized(this) {
-        favoritesManagerRef ?: AndroidFavoritesManager(ctx.applicationContext).also { favoritesManagerRef = it }
+    fun syncStateStore(ctx: Context): SyncStateStore = syncStateStoreRef ?: synchronized(this) {
+        syncStateStoreRef ?: SyncStateStore(ctx.applicationContext).also { syncStateStoreRef = it }
+    }
+
+    fun favoritesManager(ctx: Context): SyncedFavoritesManager = favoritesManagerRef ?: synchronized(this) {
+        favoritesManagerRef ?: SyncedFavoritesManager(syncStateStore(ctx)).also { favoritesManagerRef = it }
     }
 }

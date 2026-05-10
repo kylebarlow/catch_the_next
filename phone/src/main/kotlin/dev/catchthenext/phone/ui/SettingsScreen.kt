@@ -35,9 +35,8 @@ import dev.catchthenext.android.storage.DistanceUnit
 import dev.catchthenext.android.ui.SettingsViewModel
 import dev.catchthenext.android.ui.SyncStatus
 import dev.catchthenext.android.ui.SyncStatus.IDLE
-import dev.catchthenext.android.ui.SyncStatus.PUSHING
-import dev.catchthenext.android.ui.SyncStatus.SENT
-import dev.catchthenext.android.ui.SyncStatus.PEER_UNREACHABLE
+import dev.catchthenext.android.ui.SyncStatus.SYNCING
+import dev.catchthenext.android.ui.SyncStatus.DONE
 import dev.catchthenext.android.ui.SyncStatus.ERROR
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -50,6 +49,7 @@ fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
     val unit by viewModel.distanceUnit.collectAsState()
     val thresholdMeters by viewModel.thresholdMeters.collectAsState()
     val syncStatus by viewModel.syncStatus.collectAsState()
+    val peerReachable by viewModel.peerReachable.collectAsState()
     var showThresholdDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -97,21 +97,20 @@ fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
             )
             HorizontalDivider()
             ListItem(
-                headlineContent = { Text("Sync favorites to watch") },
+                headlineContent = { Text("Sync favorites with watch") },
                 supportingContent = {
                     Text(when (syncStatus) {
-                        PUSHING -> "Sending…"
-                        SENT -> "Sent"
-                        PEER_UNREACHABLE -> "Watch unreachable"
-                        ERROR -> "Failed"
-                        IDLE -> "Replaces watch's list with this phone's list"
+                        SYNCING -> "Syncing…"
+                        DONE -> "Synced"
+                        ERROR -> "Sync failed"
+                        IDLE -> if (peerReachable) "Watch connected" else "Watch offline — syncs when connected"
                     })
                 },
                 trailingContent = {
                     TextButton(
                         onClick = { viewModel.syncNow() },
                         enabled = syncStatus == IDLE,
-                    ) { Text("Send") }
+                    ) { Text("Sync") }
                 }
             )
             HorizontalDivider()

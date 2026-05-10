@@ -3,6 +3,7 @@ package dev.catchthenext.phone
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -25,9 +26,11 @@ import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.android.ui.FavoritesViewModel
 import dev.catchthenext.android.ui.PlaceSearchViewModel
 import dev.catchthenext.android.ui.SettingsViewModel
-import dev.catchthenext.android.sync.FavoritesSyncPusher
-import dev.catchthenext.android.sync.SyncMetadataStore
+import dev.catchthenext.android.sync.FavoritesSyncListener
+import dev.catchthenext.android.sync.ReachabilityState
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 
 class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
@@ -39,6 +42,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
             val favoritesManager = PhoneGraph.favoritesManager(context)
             val distanceStore = DistanceUnitStore(context)
             DeparturesViewModel(
+                favoritesCountFlow = favoritesManager.favoritesFlow().map { it.size }.distinctUntilChanged(),
                 quickCacheRead = {
                     val now = System.currentTimeMillis()
                     val hasPerm = ContextCompat.checkSelfPermission(
@@ -81,6 +85,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
                     val lon = freshLocation?.lon ?: cache.lon
                     val location = if (lat != null && lon != null) LatLon(lat, lon) else null
                     val threshold = distanceStore.thresholdMetersFlow.first()
+                    Log.d("Departures", "computeState force=$forceFresh favorites=${favorites.size} hasPerm=$hasPerm loc=${location != null} threshold=$threshold")
                     var state = computeTileState(
                         favorites = favorites,
                         location = location,
@@ -116,6 +121,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
                             )
                         }
                     }
+                    Log.d("Departures", "computeState result=${state::class.simpleName} stops=${(state as? TileState.Ready)?.stops?.size ?: 0}")
                     state
                 }
             ) as T
@@ -153,15 +159,15 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
             ) as T
         modelClass.isAssignableFrom(SettingsViewModel::class.java) -> {
             val store = DistanceUnitStore(context)
-            val fm = PhoneGraph.favoritesManager(context)
-            val meta = SyncMetadataStore(context)
+            val syncStore = PhoneGraph.syncStateStore(context)
             SettingsViewModel(
                 distanceUnitFlow = store.unitFlow,
                 persistUnit = { store.setUnit(it) },
                 thresholdMetersFlow = store.thresholdMetersFlow,
                 persistThreshold = { store.setThresholdMeters(it) },
                 peerLabel = "watch",
-                pushToPeer = { FavoritesSyncPusher.pushToPeer(context, fm, meta) },
+                doSync = { FavoritesSyncListener.coldStartReconcile(context, syncStore) },
+                peerReachableFlow = ReachabilityState.reachable,
             ) as T
         }
         modelClass.isAssignableFrom(AboutViewModel::class.java) -> {

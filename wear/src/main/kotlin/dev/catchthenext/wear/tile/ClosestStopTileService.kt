@@ -2,6 +2,7 @@ package dev.catchthenext.wear.tile
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.ColorBuilders
@@ -68,7 +69,8 @@ class ClosestStopTileService : SuspendingTileService() {
 
             val threshold = DistanceUnitStore(this@ClosestStopTileService).thresholdMetersFlow.first()
 
-            computeTileState(
+            Log.d("Departures", "tileRequest favorites=${favorites.size} hasPerm=$hasPerm loc=${location != null} threshold=$threshold")
+            val result = computeTileState(
                 favorites = favorites,
                 location = location,
                 hasPermission = hasPerm,
@@ -76,6 +78,8 @@ class ClosestStopTileService : SuspendingTileService() {
                 fetchDeparturesBatch = makeFetchNetworkDeparturesBatch({ client.getDeparturesBatch(it) }, cache, favorites),
                 persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
             )
+            Log.d("Departures", "tileRequest result=${result::class.simpleName} stops=${(result as? TileState.Ready)?.stops?.size ?: 0}")
+            result
         }
 
         return TileBuilders.Tile.Builder()

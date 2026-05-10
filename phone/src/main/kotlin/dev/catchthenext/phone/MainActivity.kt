@@ -1,9 +1,13 @@
 package dev.catchthenext.phone
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
 import dev.catchthenext.phone.widget.DeparturesWidget
 import kotlinx.coroutines.CoroutineScope
@@ -17,7 +21,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import dev.catchthenext.android.sync.FavoritesSyncListener
-import dev.catchthenext.android.sync.SyncMetadataStore
 import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.DeparturesViewModel
@@ -37,20 +40,30 @@ import dev.catchthenext.phone.ui.StopConfirmScreen
 import dev.catchthenext.phone.ui.StopDetailsScreen
 
 class MainActivity : ComponentActivity() {
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* DeparturesViewModel re-checks on next state refresh */ }
+
     override fun onResume() {
         super.onResume()
         CoroutineScope(Dispatchers.IO).launch { DeparturesWidget().updateAll(applicationContext) }
         CoroutineScope(Dispatchers.IO).launch {
             FavoritesSyncListener.coldStartReconcile(
                 applicationContext,
-                PhoneGraph.favoritesManager(applicationContext),
-                SyncMetadataStore(applicationContext),
+                PhoneGraph.syncStateStore(applicationContext),
             )
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val missing = arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ).filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) locationPermissionLauncher.launch(missing.toTypedArray())
         setContent {
             val factory = PhoneViewModelFactory(applicationContext)
             AppTheme {

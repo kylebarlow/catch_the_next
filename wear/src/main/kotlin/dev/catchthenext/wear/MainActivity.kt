@@ -4,8 +4,10 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
@@ -45,27 +47,38 @@ import dev.catchthenext.wear.ui.SettingsThresholdScreen
 import dev.catchthenext.wear.ui.StopConfirmScreen
 import dev.catchthenext.wear.ui.StopDetailsScreen
 import dev.catchthenext.android.sync.FavoritesSyncListener
-import dev.catchthenext.android.sync.FavoritesSyncPusher
-import dev.catchthenext.android.sync.SyncMetadataStore
+import dev.catchthenext.android.sync.ReachabilityState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* permissions granted or denied — DeparturesViewModel re-checks on next state refresh */ }
+
     override fun onResume() {
         super.onResume()
         CoroutineScope(Dispatchers.IO).launch {
             FavoritesSyncListener.coldStartReconcile(
                 applicationContext,
-                WearGraph.favoritesManager(applicationContext),
-                SyncMetadataStore(applicationContext),
+                WearGraph.syncStateStore(applicationContext),
             )
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val missing = arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ).filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) locationPermissionLauncher.launch(missing.toTypedArray())
         setContent {
             val factory = WearViewModelFactory(applicationContext)
             MaterialTheme {
@@ -132,6 +145,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
             val favoritesManager = WearGraph.favoritesManager(context)
             val distanceStore = DistanceUnitStore(context)
             DeparturesViewModel(
+                favoritesCountFlow = favoritesManager.favoritesFlow().map { it.size }.distinctUntilChanged(),
                 quickCacheRead = {
                     val now = System.currentTimeMillis()
                     val hasPerm = ContextCompat.checkSelfPermission(
@@ -174,6 +188,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                     val lon = freshLocation?.lon ?: cache.lon
                     val location = if (lat != null && lon != null) LatLon(lat, lon) else null
                     val threshold = distanceStore.thresholdMetersFlow.first()
+                    Log.d("Departures", "computeState force=$forceFresh favorites=${favorites.size} hasPerm=$hasPerm loc=${location != null} threshold=$threshold")
                     var state = computeTileState(
                         favorites = favorites,
                         location = location,
@@ -209,6 +224,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                             )
                         }
                     }
+                    Log.d("Departures", "computeState result=${state::class.simpleName} stops=${(state as? TileState.Ready)?.stops?.size ?: 0}")
                     state
                 }
             ) as T
@@ -239,15 +255,15 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
             ) as T
         modelClass.isAssignableFrom(SettingsViewModel::class.java) -> {
             val store = DistanceUnitStore(context)
-            val fm = WearGraph.favoritesManager(context)
-            val meta = SyncMetadataStore(context)
+            val syncStore = WearGraph.syncStateStore(context)
             SettingsViewModel(
                 distanceUnitFlow = store.unitFlow,
                 persistUnit = { store.setUnit(it) },
                 thresholdMetersFlow = store.thresholdMetersFlow,
                 persistThreshold = { store.setThresholdMeters(it) },
                 peerLabel = "phone",
-                pushToPeer = { FavoritesSyncPusher.pushToPeer(context, fm, meta) },
+                doSync = { FavoritesSyncListener.coldStartReconcile(context, syncStore) },
+                peerReachableFlow = ReachabilityState.reachable,
             ) as T
         }
         modelClass.isAssignableFrom(AboutViewModel::class.java) -> {

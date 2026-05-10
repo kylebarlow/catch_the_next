@@ -12,7 +12,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "dev.catchthenext.wear"
+        applicationId = "dev.catchthenext"
         minSdk = 30
         targetSdk = 35
         versionCode = 1

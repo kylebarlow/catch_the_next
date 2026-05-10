@@ -13,12 +13,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.wear.compose.material.Icon
 import androidx.navigation.NavController
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
@@ -42,6 +46,13 @@ import dev.catchthenext.wear.tile.TileColors
 @Composable
 fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewModel) {
     val ui by viewModel.ui.collectAsState()
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            viewModel.refresh(force = false)
+        }
+    }
 
     when (val state = ui) {
         is DeparturesUi.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -71,18 +82,23 @@ private fun DeparturesContent(
                         label = { Text("Manage favorites") },
                         colors = ChipDefaults.secondaryChipColors(),
                     )
+                    RefreshChip(viewModel)
                 }
             }
             is TileState.NoPermission -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Location permission required")
             }
             is TileState.NoLocation -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Getting location…")
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Getting location…")
+                    RefreshChip(viewModel)
+                }
             }
             is TileState.NetworkError -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Network error")
                     Text(tileState.message)
+                    RefreshChip(viewModel)
                 }
             }
             is TileState.Ready -> DeparturesReadyContent(tileState, navController, viewModel)
@@ -153,6 +169,15 @@ private fun DeparturesReadyContent(
             )
         }
     }
+}
+
+@Composable
+private fun RefreshChip(viewModel: DeparturesViewModel) {
+    Chip(
+        onClick = { viewModel.refresh(force = true) },
+        label = { Text("Refresh") },
+        colors = ChipDefaults.secondaryChipColors(),
+    )
 }
 
 @Composable

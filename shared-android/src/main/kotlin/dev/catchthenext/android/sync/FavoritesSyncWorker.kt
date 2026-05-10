@@ -6,34 +6,25 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import dev.catchthenext.storage.FavoritesManager
 import java.util.concurrent.TimeUnit
 
 class FavoritesSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
-        val getFavorites = favoritesFactory ?: return Result.failure()
-        val getMetaStore = metaStoreFactory ?: return Result.failure()
-        FavoritesSyncListener.coldStartReconcile(
-            applicationContext,
-            getFavorites(applicationContext),
-            getMetaStore(applicationContext),
-        )
+        val getStore = storeFactory ?: return Result.failure()
+        val store = getStore(applicationContext)
+        FavoritesSyncListener.coldStartReconcile(applicationContext, store)
+        FavoritesSyncPublisher.republish(applicationContext, store)
         return Result.success()
     }
 
     companion object {
         private const val WORK_NAME = "favorites_sync"
 
-        @Volatile private var favoritesFactory: ((Context) -> FavoritesManager)? = null
-        @Volatile private var metaStoreFactory: ((Context) -> SyncMetadataStore)? = null
+        @Volatile private var storeFactory: ((Context) -> SyncStateStore)? = null
 
-        fun configure(
-            getFavorites: (Context) -> FavoritesManager,
-            getMetaStore: (Context) -> SyncMetadataStore,
-        ) {
-            favoritesFactory = getFavorites
-            metaStoreFactory = getMetaStore
+        fun configure(getStore: (Context) -> SyncStateStore) {
+            storeFactory = getStore
         }
 
         fun schedule(context: Context) {

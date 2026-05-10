@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.catchthenext.android.storage.DistanceUnit
 import dev.catchthenext.android.storage.localeDefaultUnit
-import dev.catchthenext.android.sync.PushResult
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -14,11 +13,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-enum class SyncStatus { IDLE, PUSHING, SENT, PEER_UNREACHABLE, ERROR }
+enum class SyncStatus { IDLE, SYNCING, DONE, ERROR }
 
 class SettingsViewModel(
     distanceUnitFlow: Flow<DistanceUnit>,
@@ -26,7 +26,8 @@ class SettingsViewModel(
     thresholdMetersFlow: Flow<Int>,
     private val persistThreshold: suspend (Int) -> Unit,
     val peerLabel: String = "",
-    private val pushToPeer: suspend () -> PushResult = { PushResult.Sent },
+    private val doSync: suspend () -> Unit = {},
+    peerReachableFlow: Flow<Boolean> = flowOf(false),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
@@ -35,6 +36,9 @@ class SettingsViewModel(
 
     val thresholdMeters: StateFlow<Int> = thresholdMetersFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 1609)
+
+    val peerReachable: StateFlow<Boolean> = peerReachableFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _syncStatus = MutableStateFlow(SyncStatus.IDLE)
     val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
@@ -52,25 +56,17 @@ class SettingsViewModel(
 
     fun syncNow() {
         viewModelScope.launch(ioDispatcher) {
-            _syncStatus.value = SyncStatus.PUSHING
-            val result = runCatching { pushToPeer() }
-                .getOrElse { PushResult.Failed(it.message ?: "unknown error") }
-            when (result) {
-                is PushResult.Sent -> {
-                    _syncStatus.value = SyncStatus.SENT
-                    val label = if (peerLabel.isNotEmpty()) "Sent to $peerLabel" else "Sent"
-                    _syncEvents.trySend(label)
-                }
-                is PushResult.PeerUnreachable -> {
-                    _syncStatus.value = SyncStatus.PEER_UNREACHABLE
-                    val label = if (peerLabel.isNotEmpty()) "$peerLabel unreachable" else "Peer unreachable"
-                    _syncEvents.trySend(label)
-                }
-                is PushResult.Failed -> {
-                    _syncStatus.value = SyncStatus.ERROR
-                    _syncEvents.trySend("Failed: ${result.reason}")
-                }
+            _syncStatus.value = SyncStatus.SYNCING
+            runCatching { doSync() }.onFailure {
+                _syncStatus.value = SyncStatus.ERROR
+                _syncEvents.trySend("Sync failed: ${it.message}")
+                delay(2_000)
+                _syncStatus.value = SyncStatus.IDLE
+                return@launch
             }
+            _syncStatus.value = SyncStatus.DONE
+            val peerSuffix = if (!peerReachable.value && peerLabel.isNotEmpty()) " ($peerLabel offline — will deliver when connected)" else ""
+            _syncEvents.trySend("Synced$peerSuffix")
             delay(2_000)
             _syncStatus.value = SyncStatus.IDLE
         }
