@@ -5,23 +5,31 @@
     android:viewportWidth="24"
     android:viewportHeight="24">
 
-    <!-- Bus body with two window cutouts -->
+    <!-- Bus body with two side windows + slanted windshield cutouts -->
     <path
         android:fillColor="#FFFFFF"
         android:fillType="evenOdd"
         android:pathData="
-            M 3,5 L 20,5 Q 22,5 22,7 L 22,14 Q 22,16 20,16 L 3,16 Q 1,16 1,14 L 1,7 Q 1,5 3,5 Z
-            M 3,7 H 9 V 13 H 3 Z
-            M 13,7 H 19 V 13 H 13 Z" />
+            M 5,7 L 17,7 L 20,10 L 20,13 Q 20,15 18,15 L 5,15 Q 3,15 3,13 L 3,9 Q 3,7 5,7 Z
+            M 5,9 H 8 V 13 H 5 Z
+            M 10,9 H 13 V 13 H 10 Z
+            M 15,9 L 17,9 L 19,13 L 15,13 Z" />
 
     <!-- Left wheel -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M 3,18 A 2,2 0 1 0 7,18 A 2,2 0 1 0 3,18 Z" />
+        android:pathData="M 5,17 A 2,2 0 1 0 9,17 A 2,2 0 1 0 5,17 Z" />
 
     <!-- Right wheel -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M 16,18 A 2,2 0 1 0 20,18 A 2,2 0 1 0 16,18 Z" />
+        android:pathData="M 14,17 A 2,2 0 1 0 18,17 A 2,2 0 1 0 14,17 Z" />
+
+    <!-- Speed lines -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1"
+        android:strokeLineCap="round"
+        android:pathData="M 1,9 L 2,9 M 0,11 L 2,11 M 1,13 L 2,13" />
 
 </vector>
