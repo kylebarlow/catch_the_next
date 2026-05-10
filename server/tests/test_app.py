@@ -2,6 +2,7 @@ import os
 os.environ.setdefault("TRANSITLAND_API_KEY", "real-upstream-key")
 os.environ.setdefault("APP_API_KEYS", "test-key")
 os.environ.setdefault("TRANSITLAND_BASE_URL", "http://mock-transitland")
+os.environ.setdefault("STATS_PATH_SECRET", "")
 
 import json
 import bottle
@@ -160,3 +161,55 @@ def test_geocode_400_q_too_long(mock_geocode):
     assert captured["status"].startswith("400")
     result = json.loads(body)
     assert result["error"] == "bad_request"
+
+
+# ── /stats routes ─────────────────────────────────────────────────────────────
+
+_FAKE_STATS = {
+    "windows": {
+        "hour": {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
+                 "nominatim_calls": 0, "error_count": 0, "by_endpoint": {}, "top_ips": []},
+        "day":  {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
+                 "nominatim_calls": 0, "error_count": 0, "by_endpoint": {}, "top_ips": []},
+        "week": {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
+                 "nominatim_calls": 0, "error_count": 0, "by_endpoint": {}, "top_ips": []},
+        "all":  {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
+                 "nominatim_calls": 0, "error_count": 0, "by_endpoint": {}, "top_ips": []},
+    },
+    "log_path": "/dev/null",
+    "log_size_bytes": 0,
+    "oldest_entry": None,
+    "newest_entry": None,
+    "generated_at": "2026-05-10T12:00:00+00:00",
+}
+
+
+@patch("app._stats_secret", "test-secret")
+@patch("app.load_stats", return_value=_FAKE_STATS)
+def test_stats_json_200(mock_load_stats):
+    captured, body = _call(app, "/_internal/test-secret/stats.json", api_key=None)
+    assert captured["status"].startswith("200")
+    result = json.loads(body)
+    assert "windows" in result
+    assert set(result["windows"].keys()) == {"hour", "day", "week", "all"}
+
+
+@patch("app._stats_secret", "test-secret")
+@patch("app.load_stats", return_value=_FAKE_STATS)
+def test_stats_html_200(mock_load_stats):
+    captured, body = _call(app, "/_internal/test-secret/stats", api_key=None)
+    assert captured["status"].startswith("200")
+    assert "text/html" in captured["headers"].get("Content-Type", "")
+    assert b"CTN Proxy Stats" in body
+
+
+@patch("app._stats_secret", "test-secret")
+def test_stats_json_404_wrong_token():
+    captured, body = _call(app, "/_internal/wrongtoken/stats.json", api_key=None)
+    assert captured["status"].startswith("404")
+
+
+@patch("app._stats_secret", "")
+def test_stats_json_404_no_secret():
+    captured, body = _call(app, "/_internal/anything/stats.json", api_key=None)
+    assert captured["status"].startswith("404")

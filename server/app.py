@@ -1,9 +1,14 @@
+import hmac
 import json
 import bottle
 from auth import require_auth
 from rate_limit import require_rate_limit
 from proxy import get_stops, get_departures, get_departures_by_onestop_ids, geocode, _BATCH_MAX_STOPS
+from config import load_config
+from stats import load_stats, render_html
 
+_cfg = load_config()
+_stats_secret = _cfg["STATS_PATH_SECRET"]
 
 app = bottle.Bottle()
 
@@ -114,3 +119,24 @@ def departures_batch():
     next_seconds = bottle.request.query.get("next", 7200)
     bottle.response.content_type = "application/json"
     return json.dumps(get_departures_by_onestop_ids(onestop_ids, next_seconds))
+
+
+def _stats_check(token):
+    """Return True if the token matches the configured secret."""
+    return bool(_stats_secret) and hmac.compare_digest(token, _stats_secret)
+
+
+@app.route("/_internal/<token>/stats.json")
+def stats_json(token):
+    if not _stats_check(token):
+        raise bottle.HTTPResponse(status=404, body="Not Found")
+    bottle.response.content_type = "application/json"
+    return json.dumps(load_stats())
+
+
+@app.route("/_internal/<token>/stats")
+def stats_html(token):
+    if not _stats_check(token):
+        raise bottle.HTTPResponse(status=404, body="Not Found")
+    bottle.response.content_type = "text/html; charset=utf-8"
+    return render_html(load_stats())

@@ -11,6 +11,9 @@ def load_config():
         "RATE_LIMIT_TAIL_BYTES": int(os.environ.get("RATE_LIMIT_TAIL_BYTES", "262144")),
         "UPSTREAM_CONNECT_TIMEOUT": float(os.environ.get("UPSTREAM_CONNECT_TIMEOUT", "5")),
         "UPSTREAM_READ_TIMEOUT": float(os.environ.get("UPSTREAM_READ_TIMEOUT", "10")),
+        "STATS_PATH_SECRET": os.environ.get("STATS_PATH_SECRET", ""),
+        "STATS_MAX_LOG_BYTES": int(os.environ.get("STATS_MAX_LOG_BYTES", "50000000")),
+        "STATS_CACHE_SECONDS": int(os.environ.get("STATS_CACHE_SECONDS", "30")),
     }
 
     missing = []
