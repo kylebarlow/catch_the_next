@@ -14,22 +14,30 @@ class DockerIntegrationTest {
 
     private val baseUrl = "http://localhost:39217/api/v2/rest"
     private val healthUrl = "http://localhost:39217/healthz"
-    private val apiKey = "dev-app-key"
 
     // Mission Bay / China Basin area, SF
     private val testLat = 37.7766595
     private val testLon = -122.3946275
 
-    // Caltrain 4th and King: parent station and a child platform stop
-    private val caltrainStopId = 2173133854L
-    private val caltrainSouthboundPlatformId = 2173134179L
+    // Stable onestop IDs for Caltrain 4th & King (parent + platform stops)
+    private val caltrainOnestopId = "s-9q8yyv4b0b-caltrain4th~king"
+    private val caltrainSouthboundOnestopId = "s-9q8yyufxpn-sanfranciscocaltrainstationsouthbound"
 
     private val serverDir: File by lazy {
-        // Gradle runs tests with CWD = app/
+        // Gradle runs tests with CWD = core/
         File("../server").canonicalFile.also {
             check(it.isDirectory) { "Expected server dir at $it" }
         }
     }
+
+    private fun apiKey(): String =
+        System.getenv("APP_API_KEYS")?.split(",")?.firstOrNull()?.trim()
+            ?: File(serverDir, ".env").takeIf { it.exists() }
+                ?.readLines()
+                ?.firstOrNull { it.startsWith("APP_API_KEYS=") }
+                ?.removePrefix("APP_API_KEYS=")
+                ?.split(",")?.firstOrNull()?.trim()
+            ?: ""
 
     @BeforeAll
     fun startDockerIfNeeded() {
@@ -74,11 +82,11 @@ class DockerIntegrationTest {
 
     @Test
     fun `stops API returns stops for known location through docker`() {
-        val client = TransitlandClient(apiKey, baseUrl)
+        val client = TransitlandClient(apiKey(), baseUrl)
         val stops = client.getNearbyStops(testLat, testLon, radiusMeters = 500)
 
         println("\n[Docker] Stops near $testLat, $testLon:")
-        stops.forEach { println("  ID: ${it.id}  GTFS: ${it.stopId}  Name: ${it.stopName}") }
+        stops.forEach { println("  ID: ${it.id}  onestop: ${it.onestopId}  Name: ${it.stopName}") }
 
         assertTrue(stops.isNotEmpty(), "Expected at least one stop near Mission Bay, SF")
         assertTrue(stops.all { it.id > 0 }, "All stops must have a valid non-zero ID")
@@ -86,11 +94,12 @@ class DockerIntegrationTest {
     }
 
     @Test
-    fun `departures API returns departures for Caltrain 4th and King through docker`() {
-        val client = TransitlandClient(apiKey, baseUrl)
-        val departures = client.getDepartures(caltrainStopId).departures
+    fun `departures batch API returns departures for Caltrain 4th and King through docker`() {
+        val client = TransitlandClient(apiKey(), baseUrl)
+        val result = client.getDeparturesBatch(listOf(caltrainOnestopId))
+        val departures = result[caltrainOnestopId]?.departures ?: emptyList()
 
-        println("\n[Docker] Departures for Caltrain 4th & King (ID: $caltrainStopId):")
+        println("\n[Docker] Departures for Caltrain 4th & King ($caltrainOnestopId):")
         departures.forEach { d ->
             println("  ${d.displayDepartureMinutes} min | Route ${d.routeShortName} → ${d.headsign} (${d.displayDepartureTime})")
         }
@@ -104,12 +113,13 @@ class DockerIntegrationTest {
     }
 
     @Test
-    fun `departures API handles child platform stop with null children field`() {
-        // Platform stops return "children": null from Transitland, which previously caused a 500.
-        val client = TransitlandClient(apiKey, baseUrl)
-        val departures = client.getDepartures(caltrainSouthboundPlatformId).departures
+    fun `departures batch API handles platform stop through docker`() {
+        // Platform stops return "children": null from Transitland — verify the proxy handles this cleanly.
+        val client = TransitlandClient(apiKey(), baseUrl)
+        val result = client.getDeparturesBatch(listOf(caltrainSouthboundOnestopId))
+        val departures = result[caltrainSouthboundOnestopId]?.departures ?: emptyList()
 
-        println("\n[Docker] Departures for Caltrain Southbound platform (ID: $caltrainSouthboundPlatformId):")
+        println("\n[Docker] Departures for Caltrain Southbound platform ($caltrainSouthboundOnestopId):")
         departures.forEach { d ->
             println("  ${d.displayDepartureMinutes} min | Route ${d.routeShortName} → ${d.headsign}")
         }

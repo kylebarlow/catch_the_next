@@ -8,6 +8,28 @@ import requests
 import bottle
 from config import load_config
 
+_RESPONSE_CACHE_TTL = 50
+_response_cache: dict = {}
+_response_cache_lock = threading.Lock()
+
+
+def _cache_get(key):
+    with _response_cache_lock:
+        entry = _response_cache.get(key)
+        if entry and time.monotonic() - entry[0] < _RESPONSE_CACHE_TTL:
+            return entry[1]
+    return None
+
+
+def _cache_set(key, value):
+    with _response_cache_lock:
+        _response_cache[key] = (time.monotonic(), value)
+        if len(_response_cache) > 256:
+            now = time.monotonic()
+            expired = [k for k, v in _response_cache.items() if now - v[0] >= _RESPONSE_CACHE_TTL]
+            for k in expired:
+                del _response_cache[k]
+
 __version__ = "1.0"
 
 _cfg = load_config()
@@ -130,9 +152,13 @@ def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=Non
 def get_stops(lat, lon, radius=500, limit=20):
     radius = min(int(radius), 5000)
     limit = min(int(limit), 50)
-    data = _upstream_get("stops", {
-        "lat": lat, "lon": lon, "radius": radius, "limit": _UPSTREAM_STOPS_LIMIT,
-    })
+    cache_key = f"stops:{lat}:{lon}:{radius}"
+    data = _cache_get(cache_key)
+    if data is None:
+        data = _upstream_get("stops", {
+            "lat": lat, "lon": lon, "radius": radius, "limit": _UPSTREAM_STOPS_LIMIT,
+        })
+        _cache_set(cache_key, data)
 
     stops = []
     for s in data.get("stops", []):
@@ -335,6 +361,10 @@ _BATCH_MAX_STOPS = 6
 
 def get_departures_by_onestop_ids(onestop_ids, next_seconds=7200):
     next_seconds = min(int(next_seconds), 86400)
+    cache_key = f"departures:{','.join(sorted(onestop_ids))}:{next_seconds}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     # Transitland's /stops endpoint takes a single onestop_id per call (a
     # comma-joined value matches nothing), so resolve each id in parallel.
@@ -362,7 +392,9 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=7200):
     with ThreadPoolExecutor(max_workers=max(len(onestop_ids), 1)) as pool:
         resolved = list(pool.map(_resolve, onestop_ids))
         stops = list(pool.map(_fetch, resolved))
-    return {"stops": stops}
+    result = {"stops": stops}
+    _cache_set(cache_key, result)
+    return result
 
 
 def _parse_minutes(scheduled_utc):

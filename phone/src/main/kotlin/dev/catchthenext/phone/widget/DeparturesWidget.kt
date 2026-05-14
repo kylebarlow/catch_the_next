@@ -46,7 +46,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 private const val MAX_WIDGET_GROUPS = 3
-private const val WIDGET_CACHE_TTL_MS = 5 * 60_000L
+private const val WIDGET_CACHE_TTL_MS = 2 * 60_000L
 
 class DeparturesWidget : GlanceAppWidget() {
 

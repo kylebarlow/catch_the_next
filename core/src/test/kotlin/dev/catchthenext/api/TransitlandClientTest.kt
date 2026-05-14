@@ -87,18 +87,17 @@ class TransitlandClientTest {
     private val testLon = -122.3946275
     private val testRadius = 500
 
-    private fun apiKey(): String {
-        return System.getenv("APP_API_KEY")
+    private fun apiKey(): String =
+        System.getenv("APP_API_KEYS")?.split(",")?.firstOrNull()?.trim()
             ?: run {
                 val dotenvFile = java.io.File(".env")
                 if (dotenvFile.exists()) {
                     dotenvFile.readLines()
-                        .firstOrNull { it.startsWith("APP_API_KEY=") }
-                        ?.removePrefix("APP_API_KEY=")
-                        ?.trim()
+                        .firstOrNull { it.startsWith("APP_API_KEYS=") }
+                        ?.removePrefix("APP_API_KEYS=")
+                        ?.split(",")?.firstOrNull()?.trim()
                 } else null
             } ?: ""
-    }
 
     private fun baseUrl(): String =
         System.getenv("CATCH_THE_NEXT_BASE_URL") ?: "http://localhost:39217/api/v2/rest"
@@ -122,16 +121,16 @@ class TransitlandClientTest {
     }
 
     @Test
-    fun `getDepartures returns departures for Caltrain 4th and King`() {
+    fun `getDeparturesBatch returns departures for Caltrain 4th and King`() {
         val key = apiKey()
-        assumeTrue(key.isNotBlank(), "APP_API_KEY not set — skipping live API test")
+        assumeTrue(key.isNotBlank(), "APP_API_KEYS not set — skipping live API test")
 
-        // Parent station — departures live on child platform stops in the API response.
-        val caltrainStopId = 2173133854L
+        val caltrainOnestopId = "s-9q8yyv4b0b-caltrain4th~king"
         val client = TransitlandClient(key, baseUrl())
-        val departures = client.getDepartures(caltrainStopId).departures
+        val result = client.getDeparturesBatch(listOf(caltrainOnestopId))
+        val departures = result[caltrainOnestopId]?.departures ?: emptyList()
 
-        println("\nDepartures for Caltrain 4th & King (ID: $caltrainStopId):")
+        println("\nDepartures for Caltrain 4th & King ($caltrainOnestopId):")
         departures.forEach { d ->
             println("  ${d.displayDepartureMinutes} min | Route ${d.routeShortName} → ${d.headsign} (${d.displayDepartureTime})")
         }
