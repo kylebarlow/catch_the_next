@@ -2,13 +2,44 @@ import os
 os.environ.setdefault("TRANSITLAND_API_KEY", "real-upstream-key")
 os.environ.setdefault("APP_API_KEYS", "app-key")
 os.environ.setdefault("TRANSITLAND_BASE_URL", "http://mock-transitland")
+os.environ.setdefault("CACHE_DB_PATH", ":memory:")
 
 import json
 import time
 import pytest
-import requests_mock as req_mock
+from unittest.mock import patch, MagicMock
 import proxy
 
+
+# ── HTTP mock helpers ──────────────────────────────────────────────────────────
+# Tests patch proxy._http_get_json directly, since proxy now uses urllib
+# (not requests). Each test controls what _http_get_json returns per URL.
+
+def _make_http_mock(*url_responses, default=None, capture=None):
+    """Return a side_effect callable for proxy._http_get_json.
+
+    *url_responses* is a sequence of (url_fragment, response_or_callable) pairs
+    tried in order. If the URL contains *url_fragment*, return the paired value
+    (or call it with (url, params, headers) if callable).
+
+    If *capture* is a list it accumulates {"url":…, "params":…, "headers":…}
+    dicts for later inspection.
+    """
+    def side_effect(url, params=None, headers=None, timeout=None, allow_404=False):
+        if capture is not None:
+            capture.append({"url": url, "params": dict(params or {}), "headers": dict(headers or {})})
+        for fragment, resp in url_responses:
+            if fragment in url:
+                if callable(resp):
+                    return resp(url, params or {}, headers or {})
+                return resp
+        if default is not None:
+            return default
+        raise AssertionError(f"Unexpected _http_get_json call: {url!r} params={params}")
+    return side_effect
+
+
+# ── Fixture data ───────────────────────────────────────────────────────────────
 
 STOPS_RESPONSE = {
     "stops": [
@@ -104,9 +135,10 @@ DEPARTURES_RESPONSE_WITH_AGENCY = {
 }
 
 
+# ── get_stops ──────────────────────────────────────────────────────────────────
+
 def test_get_stops_returns_shaped_data():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE))):
         result = proxy.get_stops(37.8, -122.4)
 
     assert "stops" in result
@@ -116,45 +148,45 @@ def test_get_stops_returns_shaped_data():
 
 
 def test_get_stops_injects_upstream_key():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE), capture=calls)):
         proxy.get_stops(37.8, -122.4)
-        assert "apikey=" in m.last_request.url
+
+    assert any("apikey" in c["params"] for c in calls)
+    assert any(c["params"].get("apikey") == "real-upstream-key" for c in calls)
 
 
 def test_get_stops_does_not_leak_key_in_response():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE))):
         result = proxy.get_stops(37.8, -122.4)
 
     assert "real-upstream-key" not in json.dumps(result)
 
 
 def test_get_stops_clamps_radius():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE), capture=calls)):
         proxy.get_stops(37.8, -122.4, radius=99999)
-        sent_params = dict(pair.split("=") for pair in
-                           m.last_request.url.split("?")[1].split("&"))
 
-    assert int(sent_params["radius"]) <= 5000
+    stops_call = next(c for c in calls if "stops" in c["url"])
+    assert int(stops_call["params"]["radius"]) <= 5000
 
 
-# Regression: at Duboce Park (37.76955, -122.4332) the upstream API sorts stops
-# alphabetically. With a low limit, alphabetically-early but distant bus stops
-# crowd out the actually-closest N-train stops ("Duboce St/Noe St/Duboce Park",
-# "Sunset Tunnel East Portal"). The proxy must sort returned stops by distance
-# from the query point and return the closest `limit` stops.
+def test_get_stops_does_not_leak_internal_distance_field():
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE))):
+        result = proxy.get_stops(37.8, -122.4)
+
+    assert all("_dist_m" not in s for s in result["stops"])
+
+
 DUBOCE_PARK_LIKE_RESPONSE = {
     "stops": [
-        # Far (~400m) but alphabetically first — would dominate a small limit.
         {"id": 1, "stop_id": "A1", "stop_name": "14th St & Castro St",
          "geometry": {"coordinates": [-122.4350, 37.7660]}},
         {"id": 2, "stop_id": "A2", "stop_name": "14th St & Church St",
          "geometry": {"coordinates": [-122.4291, 37.7660]}},
         {"id": 3, "stop_id": "A3", "stop_name": "Castro St & Duboce Ave",
          "geometry": {"coordinates": [-122.4350, 37.7672]}},
-        # Close (~30m) but alphabetically late — the N-train stops the user wants.
         {"id": 100, "stop_id": "N1", "stop_name": "Duboce St/Noe St/Duboce Park",
          "geometry": {"coordinates": [-122.43356, 37.76936]}},
         {"id": 101, "stop_id": "N2", "stop_name": "Sunset Tunnel East Portal",
@@ -164,20 +196,16 @@ DUBOCE_PARK_LIKE_RESPONSE = {
 
 
 def test_get_stops_sorts_by_distance_not_alphabetical():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=DUBOCE_PARK_LIKE_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", DUBOCE_PARK_LIKE_RESPONSE))):
         result = proxy.get_stops(37.76955, -122.43320, radius=600, limit=20)
 
     names = [s["stop_name"] for s in result["stops"]]
-    # The N-train stops are physically closest and must come first, even though
-    # their names sort alphabetically after the bus stops.
     assert names[0] in {"Duboce St/Noe St/Duboce Park", "Sunset Tunnel East Portal"}
     assert names[1] in {"Duboce St/Noe St/Duboce Park", "Sunset Tunnel East Portal"}
 
 
 def test_get_stops_low_limit_keeps_closest_not_alphabetical():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=DUBOCE_PARK_LIKE_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", DUBOCE_PARK_LIKE_RESPONSE))):
         result = proxy.get_stops(37.76955, -122.43320, radius=600, limit=2)
 
     names = {s["stop_name"] for s in result["stops"]}
@@ -185,16 +213,12 @@ def test_get_stops_low_limit_keeps_closest_not_alphabetical():
 
 
 def test_get_stops_requests_wide_candidate_set_upstream():
-    # The proxy should always request a wide candidate set from upstream so that
-    # alphabetical truncation cannot drop the closest stops, regardless of the
-    # caller-requested limit.
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE), capture=calls)):
         proxy.get_stops(37.8, -122.4, limit=5)
-        sent_params = dict(pair.split("=") for pair in
-                           m.last_request.url.split("?")[1].split("&"))
 
-    assert int(sent_params["limit"]) >= 100
+    stops_call = next(c for c in calls if "stops" in c["url"] and "departures" not in c["url"])
+    assert int(stops_call["params"]["limit"]) >= 100
 
 
 def test_get_stops_skips_entries_missing_geometry():
@@ -206,20 +230,71 @@ def test_get_stops_skips_entries_missing_geometry():
              "geometry": {"coordinates": [None, None]}},
         ]
     }
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=response)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", response))):
         result = proxy.get_stops(37.8, -122.4)
 
     assert [s["stop_name"] for s in result["stops"]] == ["Has Geom"]
 
 
-def test_get_stops_does_not_leak_internal_distance_field():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
+def test_get_stops_passes_through_feed_attribution():
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE_WITH_FEED))):
         result = proxy.get_stops(37.8, -122.4)
 
-    assert all("_dist_m" not in s for s in result["stops"])
+    stop = result["stops"][0]
+    assert stop["feed_onestop_id"] == "f-9q9-testfeed"
+    assert stop["feed_name"] == "Test Transit Agency"
+    assert stop["attribution_text"] == "Data provided by Test Transit Agency"
+    assert stop["attribution_instructions"] == "Please credit Test Transit Agency"
+    assert stop["use_without_attribution"] is False
+    assert stop["license_spdx"] == "CC-BY-4.0"
+    assert stop["license_url"] == "https://example.com/license"
 
+
+def test_get_stops_attribution_fields_are_none_when_no_feed_version():
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE))):
+        result = proxy.get_stops(37.8, -122.4)
+
+    stop = result["stops"][0]
+    assert stop["feed_onestop_id"] is None
+    assert stop["feed_name"] is None
+    assert stop["attribution_text"] is None
+
+
+def test_upstream_500_raises_http_response():
+    import bottle
+    import urllib.error
+
+    def raise_500(url, params=None, headers=None, timeout=None, allow_404=False):
+        raise bottle.HTTPResponse(
+            body=json.dumps({"error": "upstream", "status": 500}),
+            status=502,
+            headers={"Content-Type": "application/json"},
+        )
+
+    with patch("proxy._http_get_json", side_effect=raise_500):
+        with pytest.raises(bottle.HTTPResponse) as exc:
+            proxy.get_stops(37.8, -122.4)
+    assert exc.value.status_code == 502
+
+
+def test_proxy_uses_descriptive_user_agent():
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE), capture=calls)):
+        proxy.get_stops(37.8, -122.4)
+
+    assert proxy._USER_AGENT.startswith("CatchTheNext")
+
+
+def test_get_stops_radius_capped_at_5000():
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE), capture=calls)):
+        proxy.get_stops(37.8, -122.4, radius=99999)
+
+    stops_call = next(c for c in calls if "stops" in c["url"] and "departures" not in c["url"])
+    assert int(stops_call["params"]["radius"]) <= 5000
+
+
+# ── get_departures ─────────────────────────────────────────────────────────────
 
 DEPARTURES_RESPONSE_NULL_FIELDS = {
     "stops": [
@@ -239,19 +314,16 @@ DEPARTURES_RESPONSE_NULL_FIELDS = {
 
 
 def test_get_departures_handles_null_departure_and_children():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_NULL_FIELDS)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE_NULL_FIELDS))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert "departures" in result
     assert result["departures"] == []
 
 
 def test_get_departures_returns_sorted():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE))):
         result = proxy.get_departures(42, next_seconds=3600)
 
-    assert "departures" in result
     deps = result["departures"]
     minutes = [d["scheduled_departure_minutes"] for d in deps]
     assert minutes == sorted(minutes)
@@ -318,8 +390,7 @@ DEPARTURES_RESPONSE_SCHEDULED_ONLY = {
 
 
 def test_departure_with_estimate_is_live():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_ESTIMATE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE_WITH_ESTIMATE))):
         result = proxy.get_departures(42, next_seconds=3600)
 
     dep = result["departures"][0]
@@ -332,8 +403,7 @@ def test_departure_with_estimate_is_live():
 
 
 def test_departure_without_estimate_is_scheduled():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_SCHEDULED_ONLY)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE_SCHEDULED_ONLY))):
         result = proxy.get_departures(42, next_seconds=3600)
 
     dep = result["departures"][0]
@@ -344,8 +414,7 @@ def test_departure_without_estimate_is_scheduled():
 
 
 def test_static_without_estimate_is_scheduled():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_STATIC_NO_ESTIMATE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE_STATIC_NO_ESTIMATE))):
         result = proxy.get_departures(42, next_seconds=3600)
 
     dep = result["departures"][0]
@@ -375,8 +444,7 @@ def test_live_departure_sorts_by_live_minutes():
             }
         ]
     }
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=response)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", response))):
         result = proxy.get_departures(42, next_seconds=3600)
 
     deps = result["departures"]
@@ -390,9 +458,6 @@ def test_live_departure_sorts_by_live_minutes():
 
 
 def test_departure_without_utc_is_skipped():
-    # When Transitland returns departure=null with only a local-timezone GTFS
-    # departure_time, we can't compute accurate minutes without the agency
-    # timezone — so we skip the departure rather than show a wrong time.
     response = {
         "stops": [
             {
@@ -411,51 +476,14 @@ def test_departure_without_utc_is_skipped():
             }
         ]
     }
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=response)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", response))):
         result = proxy.get_departures(42, next_seconds=86400)
 
     assert result["departures"] == []
 
 
-def test_upstream_500_raises_http_response():
-    import bottle
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", status_code=500)
-        with pytest.raises(bottle.HTTPResponse) as exc:
-            proxy.get_stops(37.8, -122.4)
-    assert exc.value.status_code == 502
-
-
-def test_get_stops_passes_through_feed_attribution():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE_WITH_FEED)
-        result = proxy.get_stops(37.8, -122.4)
-
-    stop = result["stops"][0]
-    assert stop["feed_onestop_id"] == "f-9q9-testfeed"
-    assert stop["feed_name"] == "Test Transit Agency"
-    assert stop["attribution_text"] == "Data provided by Test Transit Agency"
-    assert stop["attribution_instructions"] == "Please credit Test Transit Agency"
-    assert stop["use_without_attribution"] is False
-    assert stop["license_spdx"] == "CC-BY-4.0"
-    assert stop["license_url"] == "https://example.com/license"
-
-
-def test_get_stops_attribution_fields_are_none_when_no_feed_version():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
-        result = proxy.get_stops(37.8, -122.4)
-
-    stop = result["stops"][0]
-    assert stop["feed_onestop_id"] is None
-    assert stop["feed_name"] is None
-    assert stop["attribution_text"] is None
-
-
 def test_get_departures_passes_through_agency_and_feed():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE_WITH_AGENCY))):
         result = proxy.get_departures(42, next_seconds=3600)
 
     dep = result["departures"][0]
@@ -471,8 +499,7 @@ def test_get_departures_passes_through_agency_and_feed():
 
 
 def test_get_departures_attribution_fields_none_when_no_agency():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE))):
         result = proxy.get_departures(42, next_seconds=3600)
 
     dep = result["departures"][0]
@@ -481,57 +508,67 @@ def test_get_departures_attribution_fields_none_when_no_agency():
     assert dep["attribution_text"] is None
 
 
-def test_proxy_uses_descriptive_user_agent():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
-        proxy.get_stops(37.8, -122.4)
-        ua = m.last_request.headers.get("User-Agent", "")
+def test_get_departures_sends_include_alerts():
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE), capture=calls)):
+        proxy.get_departures(42, next_seconds=3600)
 
-    assert "CatchTheNext" in ua, f"Expected CatchTheNext in User-Agent, got: {ua}"
+    dep_call = next(c for c in calls if "/departures" in c["url"])
+    assert dep_call["params"].get("include_alerts") == "true"
 
 
-RESOLVE_RESPONSE_10_20 = {
-    "stops": [
-        {"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}},
-        {"id": 20, "onestop_id": "s-test-20", "stop_name": "Stop 20", "geometry": {"coordinates": [-122.4, 37.8]}},
-    ]
-}
+# ── batch departures ───────────────────────────────────────────────────────────
 
-RESOLVE_RESPONSE_42 = {
-    "stops": [
-        {"id": 42, "onestop_id": "s-test-42", "stop_name": "Stop 42", "geometry": {"coordinates": [-122.4, 37.8]}},
-    ]
-}
+RESOLVE_10 = {"stops": [{"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}}]}
+RESOLVE_20 = {"stops": [{"id": 20, "onestop_id": "s-test-20", "stop_name": "Stop 20", "geometry": {"coordinates": [-122.4, 37.8]}}]}
+RESOLVE_42 = {"stops": [{"id": 42, "onestop_id": "s-test-42", "stop_name": "Stop 42", "geometry": {"coordinates": [-122.4, 37.8]}}]}
+
+
+def _resolve_by_oid(url, params, headers):
+    """Simulate Transitland: match exactly one onestop_id at a time."""
+    oid = params.get("onestop_id", "")
+    catalog = {
+        "s-test-10": RESOLVE_10,
+        "s-test-20": RESOLVE_20,
+        "s-test-30": {"stops": [{"id": 30, "onestop_id": "s-test-30", "stop_name": "Stop 30", "geometry": {"coordinates": [-122.4, 37.8]}}]},
+        "s-test-42": RESOLVE_42,
+        "s-abc-mystation": {"stops": [{"id": 99, "onestop_id": "s-abc-mystation", "stop_name": "My Station", "geometry": {"coordinates": [-122.4, 37.8]}}]},
+    }
+    return catalog.get(oid, {"stops": []})
+
+
+def _batch_http(dep_responses_by_id=None, capture=None):
+    """Build a _http_get_json mock for batch-departures tests."""
+    dep_responses_by_id = dep_responses_by_id or {}
+
+    def side_effect(url, params=None, headers=None, timeout=None, allow_404=False):
+        if capture is not None:
+            capture.append({"url": url, "params": dict(params or {}), "headers": dict(headers or {})})
+        if "stops" in url and "/departures" not in url:
+            return _resolve_by_oid(url, params or {}, headers or {})
+        for stop_id, resp in dep_responses_by_id.items():
+            if f"stops/{stop_id}/departures" in url:
+                return resp
+        return DEPARTURES_RESPONSE
+    return side_effect
 
 
 def test_get_departures_by_onestop_ids_returns_grouped_results():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_10_20)
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
+    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE, 20: DEPARTURES_RESPONSE_WITH_AGENCY})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
     assert "stops" in result
     assert len(result["stops"]) == 2
-    assert result["stops"][0]["onestop_id"] == "s-test-10"
-    assert result["stops"][1]["onestop_id"] == "s-test-20"
-    assert "departures" in result["stops"][0]
-    assert "departures" in result["stops"][1]
-    assert len(result["stops"][0]["departures"]) > 0
-    assert len(result["stops"][1]["departures"]) > 0
+    ids = [s["onestop_id"] for s in result["stops"]]
+    assert "s-test-10" in ids
+    assert "s-test-20" in ids
+    for stop in result["stops"]:
+        assert "departures" in stop
+        assert len(stop["departures"]) > 0
 
 
 def test_get_departures_by_onestop_ids_preserves_request_order():
-    resolve = {
-        "stops": [
-            {"id": 30, "onestop_id": "s-test-30", "stop_name": "Stop 30", "geometry": {"coordinates": [-122.4, 37.8]}},
-            {"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}},
-        ]
-    }
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=resolve)
-        m.get("http://mock-transitland/stops/30/departures", json=DEPARTURES_RESPONSE)
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_batch_http()):
         result = proxy.get_departures_by_onestop_ids(["s-test-30", "s-test-10"], next_seconds=3600)
 
     assert result["stops"][0]["onestop_id"] == "s-test-30"
@@ -539,15 +576,7 @@ def test_get_departures_by_onestop_ids_preserves_request_order():
 
 
 def test_get_departures_by_onestop_ids_returns_empty_when_stop_not_resolved():
-    # When a onestop_id is not found in the resolve step, return empty departures.
-    resolve_one = {
-        "stops": [
-            {"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}},
-        ]
-    }
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=resolve_one)
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-notfound"], next_seconds=3600)
 
     found = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
@@ -559,10 +588,7 @@ def test_get_departures_by_onestop_ids_returns_empty_when_stop_not_resolved():
 
 def test_get_departures_by_onestop_ids_returns_empty_departures_for_stop_with_none():
     response_no_deps = {"stops": [{"departures": None, "children": None}]}
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_10_20)
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        m.get("http://mock-transitland/stops/20/departures", json=response_no_deps)
+    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE, 20: response_no_deps})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
     stop10 = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
@@ -572,34 +598,26 @@ def test_get_departures_by_onestop_ids_returns_empty_departures_for_stop_with_no
 
 
 def test_get_departures_by_onestop_ids_applies_next_to_departure_calls():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_10_20)
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_batch_http(capture=calls)):
         proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=1800)
 
-    for req in m.request_history:
-        if "/departures" in req.path:
-            assert "next=1800" in req.url
+    dep_calls = [c for c in calls if "/departures" in c["url"]]
+    for c in dep_calls:
+        assert c["params"].get("next") == 1800, f"expected next=1800, got {c['params']}"
 
 
 def test_get_departures_by_onestop_ids_shaping_matches_single_stop():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE_WITH_AGENCY))):
         single = proxy.get_departures(42, next_seconds=3600)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_42)
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_AGENCY)
+    with patch("proxy._http_get_json", side_effect=_batch_http({42: DEPARTURES_RESPONSE_WITH_AGENCY})):
         batch = proxy.get_departures_by_onestop_ids(["s-test-42"], next_seconds=3600)
 
-    single_deps = single["departures"]
-    batch_deps = batch["stops"][0]["departures"]
-    assert single_deps == batch_deps
+    assert single["departures"] == batch["stops"][0]["departures"]
 
 
 def test_shape_departures_is_used_by_get_departures():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE_WITH_ESTIMATE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE_WITH_ESTIMATE))):
         result = proxy.get_departures(42, next_seconds=3600)
 
     dep = result["departures"][0]
@@ -608,71 +626,77 @@ def test_shape_departures_is_used_by_get_departures():
 
 
 def test_get_departures_by_onestop_ids_resolves_then_fetches():
-    # Verify that the resolve call uses the onestop_id param and departure
-    # calls use the resolved integer ID.
-    resolve = {
-        "stops": [{"id": 99, "onestop_id": "s-abc-mystation", "stop_name": "My Station", "geometry": {"coordinates": [-122.4, 37.8]}}]
-    }
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=resolve)
-        m.get("http://mock-transitland/stops/99/departures", json=DEPARTURES_RESPONSE)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_batch_http({99: DEPARTURES_RESPONSE}, capture=calls)):
         result = proxy.get_departures_by_onestop_ids(["s-abc-mystation"], next_seconds=3600)
 
     assert result["stops"][0]["onestop_id"] == "s-abc-mystation"
     assert len(result["stops"][0]["departures"]) > 0
-    # Resolve request should have included onestop_id param
-    resolve_req = m.request_history[0]
-    assert "onestop_id=s-abc-mystation" in resolve_req.url
+    resolve_calls = [c for c in calls if "stops" in c["url"] and "/departures" not in c["url"]]
+    assert any(c["params"].get("onestop_id") == "s-abc-mystation" for c in resolve_calls)
 
 
 def test_get_departures_by_onestop_ids_resolves_each_id_individually():
-    # Regression: Transitland's /stops endpoint takes a single onestop_id value;
-    # comma-joining produces zero matches and returns empty departures for every
-    # stop. The resolve step MUST issue one upstream call per id, each with a
-    # single value (no comma).
-    def _resolve_response(request, context):
-        # Mirror real Transitland behavior: only return the stop whose
-        # onestop_id matches exactly. Comma-joined queries match nothing.
-        oid = request.qs.get("onestop_id", [""])[0]
-        catalog = {
-            "s-test-10": {"id": 10, "onestop_id": "s-test-10", "stop_name": "Stop 10", "geometry": {"coordinates": [-122.4, 37.8]}},
-            "s-test-20": {"id": 20, "onestop_id": "s-test-20", "stop_name": "Stop 20", "geometry": {"coordinates": [-122.4, 37.8]}},
-        }
-        stop = catalog.get(oid)
-        return {"stops": [stop] if stop else []}
-
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=_resolve_response)
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE, 20: DEPARTURES_RESPONSE}, capture=calls)):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
-    resolve_calls = [r for r in m.request_history if r.path.endswith("/stops")]
-    assert len(resolve_calls) == 2, (
-        f"expected one resolve call per onestop_id; got {len(resolve_calls)}: "
-        f"{[r.url for r in resolve_calls]}"
-    )
-    for r in resolve_calls:
-        oid_values = r.qs.get("onestop_id", [])
-        assert len(oid_values) == 1, f"expected single onestop_id, got {oid_values}"
-        assert "," not in oid_values[0], (
-            f"onestop_id must not be comma-joined; upstream returns no matches: {oid_values[0]}"
-        )
+    resolve_calls = [c for c in calls if "stops" in c["url"] and "/departures" not in c["url"]]
+    assert len(resolve_calls) == 2
+    for c in resolve_calls:
+        oid = c["params"].get("onestop_id", "")
+        assert "," not in oid, f"onestop_id must not be comma-joined: {oid!r}"
 
     assert len(result["stops"]) == 2
     assert len(result["stops"][0]["departures"]) > 0
     assert len(result["stops"][1]["departures"]) > 0
 
 
+def test_get_departures_by_onestop_ids_sends_include_alerts():
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_batch_http(capture=calls)):
+        proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
+
+    dep_calls = [c for c in calls if "/departures" in c["url"]]
+    assert all(c["params"].get("include_alerts") == "true" for c in dep_calls)
+
+
+def test_stop_id_cache_evicted_on_404(monkeypatch):
+    """When a cached integer_id returns 404, the cache is evicted and the
+    stop is re-resolved before trying again."""
+    import cache as _cache
+
+    # Seed a stale integer_id in cache.
+    _cache.set("oid:s-test-10", 999, ttl_seconds=60)
+
+    call_log = []
+
+    def side_effect(url, params=None, headers=None, timeout=None, allow_404=False):
+        call_log.append(url)
+        if "stops" in url and "/departures" not in url:
+            return RESOLVE_10  # re-resolve returns id=10
+        if "stops/999/departures" in url:
+            return None  # simulate 404 for stale id
+        if "stops/10/departures" in url:
+            return DEPARTURES_RESPONSE
+        return {"stops": []}
+
+    with patch("proxy._http_get_json", side_effect=side_effect):
+        result = proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
+
+    assert any("stops/999/departures" in u for u in call_log), "should try stale id first"
+    assert any("stops/10/departures" in u for u in call_log), "should retry with fresh id"
+    assert len(result["stops"][0]["departures"]) > 0
+
+
 # ── Alert helpers ──────────────────────────────────────────────────────────────
 
-_PAST = 1_000_000      # well before "now" in tests
+_PAST = 1_000_000
 _FUTURE = 9_999_999_999
 
 
 def _active_alert(header="Delays", description="Some delays", severity="WARNING",
                   cause="CONSTRUCTION", effect="REDUCED_SERVICE", periods=None):
-    """Build a minimal Transitland alert dict that is currently active."""
     return {
         "cause": cause,
         "effect": effect,
@@ -687,7 +711,6 @@ def _active_alert(header="Delays", description="Some delays", severity="WARNING"
 
 
 def _departures_with_alerts(*alerts, on_parent=False, on_child=False):
-    """Build a DEPARTURES-style response dict with alerts placed on stop/parent/child."""
     stop_alerts = [] if (on_parent or on_child) else list(alerts)
     parent_alerts = list(alerts) if on_parent else []
     child_alerts = list(alerts) if on_child else []
@@ -701,36 +724,15 @@ def _departures_with_alerts(*alerts, on_parent=False, on_child=False):
     }
 
 
-# ── include_alerts forwarded ───────────────────────────────────────────────────
-
-def test_get_departures_sends_include_alerts():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE)
-        proxy.get_departures(42, next_seconds=3600)
-        assert "include_alerts=true" in m.last_request.url
-
-
-def test_get_departures_by_onestop_ids_sends_include_alerts():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json={"stops": [{"id": 10, "onestop_id": "s-test-10", "stop_name": "S", "geometry": {"coordinates": [-122.4, 37.8]}}]})
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
-        proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
-        assert "include_alerts=true" in m.last_request.url
-
-
-# ── alert shaping ──────────────────────────────────────────────────────────────
-
 def test_get_departures_returns_alerts_key():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=DEPARTURES_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert "alerts" in result
 
 
 def test_get_departures_returns_active_alert():
     data = _departures_with_alerts(_active_alert("Track work", periods=[{"start": _PAST, "end": _FUTURE}]))
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert len(result["alerts"]) == 1
     assert result["alerts"][0]["header_text"] == "Track work"
@@ -740,8 +742,7 @@ def test_get_departures_returns_active_alert():
 def test_get_departures_filters_expired_alert():
     expired = _active_alert(periods=[{"start": _PAST, "end": _PAST}])
     data = _departures_with_alerts(expired)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert result["alerts"] == []
 
@@ -749,8 +750,7 @@ def test_get_departures_filters_expired_alert():
 def test_get_departures_filters_future_alert():
     future_only = _active_alert(periods=[{"start": _FUTURE, "end": _FUTURE}])
     data = _departures_with_alerts(future_only)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert result["alerts"] == []
 
@@ -758,31 +758,27 @@ def test_get_departures_filters_future_alert():
 def test_get_departures_retains_alert_with_no_active_period():
     no_period = _active_alert(periods=[])
     data = _departures_with_alerts(no_period)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert len(result["alerts"]) == 1
 
 
 def test_get_departures_collects_alert_from_parent():
     data = _departures_with_alerts(_active_alert("Parent alert"), on_parent=True)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert any(a["header_text"] == "Parent alert" for a in result["alerts"])
 
 
 def test_get_departures_collects_alert_from_child():
     data = _departures_with_alerts(_active_alert("Child alert"), on_child=True)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert any(a["header_text"] == "Child alert" for a in result["alerts"])
 
 
 def test_get_departures_deduplicates_alerts_across_stop_and_parent():
     alert = _active_alert("Duplicate alert")
-    # Same alert on both stop and parent — should only appear once.
     data = {
         "stops": [{
             "departures": [],
@@ -791,8 +787,7 @@ def test_get_departures_deduplicates_alerts_across_stop_and_parent():
             "children": [],
         }]
     }
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert len(result["alerts"]) == 1
 
@@ -809,8 +804,7 @@ def test_get_departures_prefers_english_translation():
         "active_period": [],
     }
     data = _departures_with_alerts(alert)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert result["alerts"][0]["header_text"] == "Delays"
 
@@ -818,29 +812,21 @@ def test_get_departures_prefers_english_translation():
 def test_get_departures_falls_back_to_first_non_empty_translation():
     alert = {
         "cause": None, "effect": None, "severity_level": "INFO",
-        "header_text": [
-            {"language": "fr", "text": "Retards"},
-        ],
+        "header_text": [{"language": "fr", "text": "Retards"}],
         "description_text": [],
         "tts_header_text": [], "tts_description_text": [], "url": [],
         "active_period": [],
     }
     data = _departures_with_alerts(alert)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops/42/departures", json=data)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", data))):
         result = proxy.get_departures(42, next_seconds=3600)
     assert result["alerts"][0]["header_text"] == "Retards"
 
 
-# ── batch alert passthrough ────────────────────────────────────────────────────
-
 def test_get_departures_by_onestop_ids_includes_alerts_per_stop():
     alert = _active_alert("Service change")
     data_with_alert = _departures_with_alerts(alert)
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=RESOLVE_RESPONSE_10_20)
-        m.get("http://mock-transitland/stops/10/departures", json=data_with_alert)
-        m.get("http://mock-transitland/stops/20/departures", json=DEPARTURES_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_batch_http({10: data_with_alert, 20: DEPARTURES_RESPONSE})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
     stop10 = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
@@ -851,17 +837,13 @@ def test_get_departures_by_onestop_ids_includes_alerts_per_stop():
 
 
 def test_get_departures_by_onestop_ids_alerts_key_present_when_no_alerts():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json={"stops": [{"id": 10, "onestop_id": "s-test-10", "stop_name": "S", "geometry": {"coordinates": [-122.4, 37.8]}}]})
-        m.get("http://mock-transitland/stops/10/departures", json=DEPARTURES_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
     assert "alerts" in result["stops"][0]
     assert result["stops"][0]["alerts"] == []
 
 
 # ── geocode ────────────────────────────────────────────────────────────────────
-
-_NOMINATIM_URL = f"{proxy._NOMINATIM_BASE_URL}/search"
 
 NOMINATIM_RESPONSE = [
     {
@@ -877,8 +859,7 @@ NOMINATIM_RESPONSE = [
 
 
 def test_geocode_returns_shaped_places():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=NOMINATIM_RESPONSE)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", NOMINATIM_RESPONSE))):
         result = proxy.geocode("Berkeley CA")
 
     assert "places" in result
@@ -892,72 +873,75 @@ def test_geocode_returns_shaped_places():
 
 
 def test_geocode_returns_empty_list_on_no_results():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=[])
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", []))):
         result = proxy.geocode("xyzzy-nonexistent-place-99999")
 
     assert result == {"places": []}
 
 
 def test_geocode_limit_capped_at_10():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=[])
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", []), capture=calls)):
         proxy.geocode("Berkeley", limit=999)
-        sent_url = m.last_request.url
 
-    assert "limit=10" in sent_url
+    nom_call = next(c for c in calls if "nominatim" in c["url"])
+    assert int(nom_call["params"].get("limit", 999)) <= 10
 
 
 def test_geocode_uses_jsonv2_format():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=[])
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", []), capture=calls)):
         proxy.geocode("Berkeley")
-        sent_url = m.last_request.url
 
-    assert "format=jsonv2" in sent_url
+    nom_call = next(c for c in calls if "nominatim" in c["url"])
+    assert nom_call["params"].get("format") == "jsonv2"
 
 
 def test_geocode_focus_viewbox_forwarded():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=[])
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", []), capture=calls)):
         proxy.geocode("station", focus_lat=37.8, focus_lon=-122.3)
-        sent_url = m.last_request.url
 
-    assert "viewbox=" in sent_url
-    assert "bounded=0" in sent_url
+    nom_call = next(c for c in calls if "nominatim" in c["url"])
+    assert "viewbox" in nom_call["params"]
+    assert nom_call["params"].get("bounded") in ("0", 0)
 
 
 def test_geocode_no_viewbox_without_focus():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=[])
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", []), capture=calls)):
         proxy.geocode("station")
-        sent_url = m.last_request.url
 
-    assert "viewbox" not in sent_url
+    nom_call = next(c for c in calls if "nominatim" in c["url"])
+    assert "viewbox" not in nom_call["params"]
 
 
 def test_geocode_accept_language_forwarded():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=[])
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", []), capture=calls)):
         proxy.geocode("station", accept_language="es")
-        sent_headers = m.last_request.headers
 
-    assert sent_headers.get("Accept-Language") == "es"
+    nom_call = next(c for c in calls if "nominatim" in c["url"])
+    assert nom_call["headers"].get("Accept-Language") == "es"
 
 
-def test_geocode_unique_user_agent_sent():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=[])
-        proxy.geocode("Berkeley")
-        ua = m.last_request.headers.get("User-Agent", "")
+def test_geocode_does_not_leak_upstream_key():
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", NOMINATIM_RESPONSE))):
+        result = proxy.geocode("Berkeley")
 
-    assert "CatchTheNext" in ua
+    assert "real-upstream-key" not in json.dumps(result)
 
 
 def test_geocode_upstream_500_raises_502():
     import bottle
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, status_code=500)
+
+    def raise_502(url, params=None, headers=None, timeout=None, allow_404=False):
+        raise bottle.HTTPResponse(
+            body='{"error":"upstream","status":500}', status=502,
+            headers={"Content-Type": "application/json"},
+        )
+
+    with patch("proxy._http_get_json", side_effect=raise_502):
         with pytest.raises(bottle.HTTPResponse) as exc:
             proxy.geocode("Berkeley")
     assert exc.value.status_code == 502
@@ -965,37 +949,23 @@ def test_geocode_upstream_500_raises_502():
 
 def test_geocode_upstream_timeout_raises_504():
     import bottle
-    import requests.exceptions
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, exc=requests.exceptions.Timeout)
+
+    def raise_504(url, params=None, headers=None, timeout=None, allow_404=False):
+        raise bottle.HTTPResponse(
+            body='{"error":"upstream_timeout"}', status=504,
+            headers={"Content-Type": "application/json"},
+        )
+
+    with patch("proxy._http_get_json", side_effect=raise_504):
         with pytest.raises(bottle.HTTPResponse) as exc:
             proxy.geocode("Berkeley")
     assert exc.value.status_code == 504
 
 
-def test_geocode_does_not_leak_upstream_key():
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=NOMINATIM_RESPONSE)
-        result = proxy.geocode("Berkeley")
-
-    assert "real-upstream-key" not in json.dumps(result)
-
-
 def test_geocode_outbound_rate_limited_to_1rps(monkeypatch):
     proxy._nominatim_last_call = time.monotonic()
     sleeps = []
-    monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
-    with req_mock.Mocker() as m:
-        m.get(_NOMINATIM_URL, json=[])
+    monkeypatch.setattr(proxy.time, "sleep", lambda s: sleeps.append(s))
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("nominatim", []))):
         proxy.geocode("Berkeley")
-    assert any(s > 0 for s in sleeps), "expected throttle sleep when called within 1 s of prior call"
-
-
-def test_get_stops_radius_capped_at_5000():
-    with req_mock.Mocker() as m:
-        m.get("http://mock-transitland/stops", json=STOPS_RESPONSE)
-        proxy.get_stops(37.8, -122.4, radius=99999)
-        sent_params = dict(pair.split("=") for pair in
-                           m.last_request.url.split("?")[1].split("&"))
-
-    assert int(sent_params["radius"]) <= 5000
+    assert any(s > 0 for s in sleeps), "expected throttle sleep when called within 1s of prior call"

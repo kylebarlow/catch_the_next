@@ -5,7 +5,6 @@ from auth import require_auth
 from rate_limit import require_rate_limit
 from proxy import get_stops, get_departures, get_departures_by_onestop_ids, geocode, _BATCH_MAX_STOPS
 from config import load_config
-from stats import load_stats, render_html
 
 _cfg = load_config()
 _stats_secret = _cfg["STATS_PATH_SECRET"]
@@ -86,7 +85,7 @@ def geocode_route():
 @require_auth
 @require_rate_limit
 def departures(stop_id):
-    next_seconds = bottle.request.query.get("next", 7200)
+    next_seconds = bottle.request.query.get("next", 3600)
     bottle.response.content_type = "application/json"
     return json.dumps(get_departures(stop_id, next_seconds))
 
@@ -116,7 +115,7 @@ def departures_batch():
             status=400, headers={"Content-Type": "application/json"},
         )
 
-    next_seconds = bottle.request.query.get("next", 7200)
+    next_seconds = bottle.request.query.get("next", 3600)
     bottle.response.content_type = "application/json"
     return json.dumps(get_departures_by_onestop_ids(onestop_ids, next_seconds))
 
@@ -130,6 +129,7 @@ def _stats_check(token):
 def stats_json(token):
     if not _stats_check(token):
         raise bottle.HTTPResponse(status=404, body="Not Found")
+    from stats import load_stats
     bottle.response.content_type = "application/json"
     return json.dumps(load_stats())
 
@@ -138,5 +138,6 @@ def stats_json(token):
 def stats_html(token):
     if not _stats_check(token):
         raise bottle.HTTPResponse(status=404, body="Not Found")
+    from stats import load_stats, render_html
     bottle.response.content_type = "text/html; charset=utf-8"
     return render_html(load_stats())

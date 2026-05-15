@@ -13,8 +13,8 @@ data class StopDepartures(
 
 interface TransitApi {
     fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int = 600, limit: Int = 20): List<Stop>
-    fun getDepartures(stopId: Long, nextSeconds: Int = 7200): StopDepartures
-    fun getDeparturesBatch(onestopIds: List<String>, nextSeconds: Int = 7200): Map<String, StopDepartures>
+    fun getDepartures(stopId: Long, nextSeconds: Int = 3600): StopDepartures
+    fun getDeparturesBatch(onestopIds: List<String>, nextSeconds: Int = 3600): Map<String, StopDepartures>
     fun geocodePlace(
         query: String,
         focusLat: Double? = null,

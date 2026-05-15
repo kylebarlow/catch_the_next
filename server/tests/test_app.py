@@ -165,17 +165,16 @@ def test_geocode_400_q_too_long(mock_geocode):
 
 # ── /stats routes ─────────────────────────────────────────────────────────────
 
+def _fake_window():
+    return {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
+            "nominatim_calls": 0, "error_count": 0, "by_endpoint": {},
+            "by_client": {}, "app_inbound": 0, "app_transitland_calls": 0,
+            "dup_inbound": 0, "dup_transitland_saved": 0, "top_ips": []}
+
+
 _FAKE_STATS = {
-    "windows": {
-        "hour": {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
-                 "nominatim_calls": 0, "error_count": 0, "by_endpoint": {}, "top_ips": []},
-        "day":  {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
-                 "nominatim_calls": 0, "error_count": 0, "by_endpoint": {}, "top_ips": []},
-        "week": {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
-                 "nominatim_calls": 0, "error_count": 0, "by_endpoint": {}, "top_ips": []},
-        "all":  {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
-                 "nominatim_calls": 0, "error_count": 0, "by_endpoint": {}, "top_ips": []},
-    },
+    "windows": {n: _fake_window() for n in ("hour", "day", "week", "all")},
+    "daily": [{"date": "2026-05-10", "inbound": 0, "transitland": 0, "app": 0}],
     "log_path": "/dev/null",
     "log_size_bytes": 0,
     "oldest_entry": None,
@@ -185,7 +184,7 @@ _FAKE_STATS = {
 
 
 @patch("app._stats_secret", "test-secret")
-@patch("app.load_stats", return_value=_FAKE_STATS)
+@patch("stats.load_stats", return_value=_FAKE_STATS)
 def test_stats_json_200(mock_load_stats):
     captured, body = _call(app, "/_internal/test-secret/stats.json", api_key=None)
     assert captured["status"].startswith("200")
@@ -195,7 +194,7 @@ def test_stats_json_200(mock_load_stats):
 
 
 @patch("app._stats_secret", "test-secret")
-@patch("app.load_stats", return_value=_FAKE_STATS)
+@patch("stats.load_stats", return_value=_FAKE_STATS)
 def test_stats_html_200(mock_load_stats):
     captured, body = _call(app, "/_internal/test-secret/stats", api_key=None)
     assert captured["status"].startswith("200")

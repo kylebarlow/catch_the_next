@@ -4,8 +4,53 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+
+class DepartureDedupTest {
+
+    private val DEPARTURES_JSON = """{"departures":[],"alerts":[]}"""
+
+    @Test
+    fun `concurrent getDepartures calls for same stop are coalesced into one upstream request`() {
+        val server = MockWebServer()
+        // Long body delay so both threads enter dedupe() before the first completes.
+        server.enqueue(
+            MockResponse()
+                .setBodyDelay(300, TimeUnit.MILLISECONDS)
+                .setBody(DEPARTURES_JSON)
+                .setResponseCode(200)
+        )
+        server.start()
+        val client = TransitlandClient("test-key", server.url("/api/v2/rest").toString())
+
+        val ready = CountDownLatch(2)
+        var result1: StopDepartures? = null
+        var result2: StopDepartures? = null
+        var error1: Throwable? = null
+        var error2: Throwable? = null
+
+        val t1 = Thread {
+            ready.countDown(); ready.await()
+            try { result1 = client.getDepartures(42L) } catch (e: Throwable) { error1 = e }
+        }
+        val t2 = Thread {
+            ready.countDown(); ready.await()
+            try { result2 = client.getDepartures(42L) } catch (e: Throwable) { error2 = e }
+        }
+        t1.start(); t2.start()
+        t1.join(5_000); t2.join(5_000)
+
+        assertEquals(null, error1, "Thread 1 threw: $error1")
+        assertEquals(null, error2, "Thread 2 threw: $error2")
+        assertEquals(1, server.requestCount, "Expected exactly 1 upstream request for two concurrent calls")
+        assertEquals(result1, result2, "Both threads should receive identical results")
+        server.shutdown()
+    }
+}
+
 
 class GeocodePlaceTest {
 

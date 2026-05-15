@@ -4,7 +4,7 @@ os.environ.setdefault("APP_API_KEYS", "test-key")
 os.environ.setdefault("STATS_PATH_SECRET", "test-stats-secret")
 
 from datetime import datetime, timezone, timedelta
-from stats import _parse_entries, _classify, compute_stats, LogEntry
+from stats import _parse_entries, _classify, compute_stats, LogEntry, _client_kind, _dedupe_key
 
 _TS_FMT = "%d/%b/%Y:%H:%M:%S %z"
 
@@ -124,10 +124,12 @@ def test_classify_other():
 # ── Aggregation ───────────────────────────────────────────────────────────────
 
 def test_compute_stats_empty():
-    windows, oldest, newest = compute_stats([])
+    windows, oldest, newest, daily = compute_stats([])
     assert oldest is None
     assert newest is None
     assert windows["all"]["inbound_total"] == 0
+    assert len(daily) == 14
+    assert all(d["inbound"] == 0 for d in daily)
 
 
 def test_compute_stats_oldest_newest():
@@ -137,7 +139,7 @@ def test_compute_stats_oldest_newest():
         _entry(ts_offset_hours=0, now=now),
         _entry(ts_offset_hours=5, now=now),
     ]
-    _, oldest, newest = compute_stats(entries, now=now)
+    _, oldest, newest, _ = compute_stats(entries, now=now)
     assert oldest == now - timedelta(hours=5)
     assert newest == now
 
@@ -150,7 +152,7 @@ def test_compute_stats_window_counts():
         _entry(ts_offset_hours=72, now=now),     # in week, all
         _entry(ts_offset_hours=200, now=now),    # in all only
     ]
-    windows, _, _ = compute_stats(entries, now=now)
+    windows, _, _, _ = compute_stats(entries, now=now)
     assert windows["hour"]["inbound_total"] == 1
     assert windows["day"]["inbound_total"] == 2
     assert windows["week"]["inbound_total"] == 3
@@ -164,7 +166,7 @@ def test_compute_stats_unique_ips():
         _entry(ip="1.1.1.1", ts_offset_hours=0, now=now),
         _entry(ip="2.2.2.2", ts_offset_hours=0, now=now),
     ]
-    windows, _, _ = compute_stats(entries, now=now)
+    windows, _, _, _ = compute_stats(entries, now=now)
     assert windows["all"]["unique_ips"] == 2
     assert windows["hour"]["unique_ips"] == 2
 
@@ -178,7 +180,7 @@ def test_compute_stats_transitland_calls():
                query="onestop_ids=a,b,c", now=now),             # 6 TL
         _entry(path="/api/v2/rest/geocode", now=now),           # 0 TL, 1 nom
     ]
-    windows, _, _ = compute_stats(entries, now=now)
+    windows, _, _, _ = compute_stats(entries, now=now)
     assert windows["all"]["transitland_calls"] == 8
     assert windows["all"]["nominatim_calls"] == 1
 
@@ -190,7 +192,7 @@ def test_compute_stats_errors_count_inbound_not_upstream():
         _entry(path="/api/v2/rest/departures",
                query="onestop_ids=a,b", status=502, now=now),
     ]
-    windows, _, _ = compute_stats(entries, now=now)
+    windows, _, _, _ = compute_stats(entries, now=now)
     assert windows["all"]["inbound_total"] == 2
     assert windows["all"]["error_count"] == 2
     assert windows["all"]["transitland_calls"] == 0
@@ -203,7 +205,7 @@ def test_compute_stats_by_endpoint():
         _entry(path="/api/v2/rest/stops", now=now),
         _entry(path="/api/v2/rest/geocode", now=now),
     ]
-    windows, _, _ = compute_stats(entries, now=now)
+    windows, _, _, _ = compute_stats(entries, now=now)
     assert windows["all"]["by_endpoint"]["stops"] == 2
     assert windows["all"]["by_endpoint"]["geocode"] == 1
 
@@ -214,7 +216,7 @@ def test_compute_stats_top_ips_sorted():
         [_entry(ip="heavy", now=now)] * 10 +
         [_entry(ip="light", now=now)] * 2
     )
-    windows, _, _ = compute_stats(entries, now=now)
+    windows, _, _, _ = compute_stats(entries, now=now)
     top = windows["all"]["top_ips"]
     assert top[0]["ip"] == "heavy"
     assert top[0]["total"] == 10
@@ -225,5 +227,66 @@ def test_compute_stats_top_ips_sorted():
 def test_compute_stats_top_ips_capped_at_25():
     now = datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
     entries = [_entry(ip=f"ip{i}", now=now) for i in range(30)]
-    windows, _, _ = compute_stats(entries, now=now)
+    windows, _, _, _ = compute_stats(entries, now=now)
     assert len(windows["all"]["top_ips"]) == 25
+
+
+def test_compute_stats_duplicate_detection():
+    now = datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
+    entries = [
+        # Two identical batch requests 10s apart — second is a duplicate.
+        LogEntry(ip="1.1.1.1", ts=now - timedelta(seconds=20),
+                 method="GET", path="/api/v2/rest/departures",
+                 query="onestop_ids=a,b", status=200),
+        LogEntry(ip="1.1.1.1", ts=now - timedelta(seconds=10),
+                 method="GET", path="/api/v2/rest/departures",
+                 query="onestop_ids=a,b", status=200),
+        # Same params but 60s later — outside the 50s window, not a dup.
+        LogEntry(ip="2.2.2.2", ts=now + timedelta(seconds=50),
+                 method="GET", path="/api/v2/rest/departures",
+                 query="onestop_ids=a,b", status=200),
+    ]
+    windows, _, _, _ = compute_stats(entries, now=now + timedelta(seconds=60))
+    assert windows["all"]["dup_inbound"] == 1
+    assert windows["all"]["dup_transitland_saved"] == 4  # 2 ids * 2 TL each
+
+
+def test_compute_stats_client_kind():
+    now = datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
+    entries = [
+        LogEntry(ip="1.1.1.1", ts=now, method="GET", path="/api/v2/rest/stops",
+                 query="", status=200, user_agent="CatchTheNext/1.0 (Android)"),
+        LogEntry(ip="2.2.2.2", ts=now, method="GET", path="/api/v2/rest/stops",
+                 query="", status=200, user_agent="Mozilla/5.0 (Macintosh)"),
+        LogEntry(ip="3.3.3.3", ts=now, method="GET", path="/api/v2/rest/stops",
+                 query="", status=200, user_agent=""),
+    ]
+    windows, _, _, _ = compute_stats(entries, now=now)
+    by_client = windows["all"]["by_client"]
+    assert by_client["app"] == 1
+    assert by_client["browser"] == 1
+    assert by_client["unknown"] == 1
+    assert windows["all"]["app_inbound"] == 1
+    assert windows["all"]["app_transitland_calls"] == 1
+
+
+def test_compute_stats_daily_rollup_14_days():
+    now = datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
+    entries = [
+        _entry(path="/api/v2/rest/stops", ts_offset_hours=0, now=now),
+        _entry(path="/api/v2/rest/stops", ts_offset_hours=24, now=now),
+        _entry(path="/api/v2/rest/stops", ts_offset_hours=24 * 20, now=now),  # too old
+    ]
+    _, _, _, daily = compute_stats(entries, now=now)
+    assert len(daily) == 14
+    assert daily[-1]["date"] == "2026-05-10"
+    today_row = daily[-1]
+    assert today_row["inbound"] == 1
+    assert today_row["transitland"] == 1
+
+
+def test_parse_entries_extracts_user_agent():
+    line = '1.2.3.4 - - [10/May/2026:12:00:00 +0000] "GET /api/v2/rest/stops HTTP/1.1" 200 512 "-" "CatchTheNext/1.0 (Android)"'
+    entries = list(_parse_entries(line))
+    assert len(entries) == 1
+    assert entries[0].user_agent == "CatchTheNext/1.0 (Android)"

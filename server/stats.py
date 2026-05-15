@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from urllib.parse import parse_qs
@@ -17,6 +18,7 @@ _LOG_RE = re.compile(
     r'^(?P<ip>\S+) \S+ \S+ \[(?P<ts>[^\]]+)\] '
     r'"(?P<method>\S+) (?P<uri>\S+)[^"]*" '
     r'(?P<status>\d{3}) \S+'
+    r'(?: "[^"]*" "(?P<ua>[^"]*)")?'
 )
 
 _STOPS_PATH       = re.compile(r'^/api/v2/rest/stops$')
@@ -24,6 +26,11 @@ _DEPARTURES_PATH  = re.compile(r'^/api/v2/rest/stops/\d+/departures$')
 _BATCH_PATH       = re.compile(r'^/api/v2/rest/departures$')
 _GEOCODE_PATH     = re.compile(r'^/api/v2/rest/geocode$')
 _HEALTHZ_PATH     = re.compile(r'^/healthz$')
+_INTERNAL_PATH    = re.compile(r'^/_internal/')
+
+# Mirror of proxy.py's _RESPONSE_CACHE_TTL — used to count how many requests
+# would have been absorbed by a working cross-request cache.
+_DUPLICATE_WINDOW_SECONDS = 50
 
 _WINDOWS = [
     ("hour", timedelta(hours=1)),
@@ -44,6 +51,7 @@ class LogEntry:
     path: str
     query: str
     status: int
+    user_agent: str = ""
 
 
 def _parse_entries(data: str):
@@ -64,6 +72,7 @@ def _parse_entries(data: str):
             path=path,
             query=query,
             status=int(m.group("status")),
+            user_agent=m.group("ua") or "",
         )
 
 
@@ -92,19 +101,75 @@ def _classify(entry: LogEntry):
     if _HEALTHZ_PATH.match(p):
         return "healthz", 0, 0
 
+    if _INTERNAL_PATH.match(p):
+        return "internal", 0, 0
+
     return "other", 0, 0
 
 
+def _client_kind(entry: LogEntry):
+    """Coarse classification of the client based on user agent."""
+    ua = entry.user_agent or ""
+    if "CatchTheNext" in ua:
+        return "app"
+    if not ua or ua == "-":
+        return "unknown"
+    if "Mozilla" in ua or "AppleWebKit" in ua:
+        return "browser"
+    return "other"
+
+
+def _dedupe_key(entry: LogEntry):
+    """Identifier for "the same request" — used to detect requests that
+    would have hit the proxy's response cache. Returns None for endpoints
+    that aren't cached (geocode, internal, healthz, other)."""
+    p = entry.path
+    if _STOPS_PATH.match(p):
+        q = parse_qs(entry.query)
+        return ("stops", q.get("lat", [""])[0], q.get("lon", [""])[0], q.get("radius", [""])[0])
+    if _BATCH_PATH.match(p):
+        q = parse_qs(entry.query)
+        ids = q.get("onestop_ids", [""])[0]
+        ids = ",".join(sorted(s for s in ids.split(",") if s))
+        return ("departures", ids, q.get("next", [""])[0])
+    if _DEPARTURES_PATH.match(p):
+        return ("departures_single", p, entry.query)
+    return None
+
+
 def compute_stats(entries, now=None):
-    """Return (windows_dict, oldest_ts, newest_ts)."""
+    """Return (result_dict, oldest_ts, newest_ts).
+
+    The result has top-level keys:
+      - windows: per-window aggregates (hour / day / week / all)
+      - daily:   per-day rollups for the last 14 days (oldest first)
+      - clients: counts per client kind (app/browser/unknown/other) for week
+    """
     if now is None:
         now = datetime.now(tz=timezone.utc)
 
     acc = {
-        wname: {"inbound": 0, "transitland": 0, "nominatim": 0, "errors": 0, "by_ep": {}, "ip_ep": {}}
+        wname: {
+            "inbound": 0,
+            "transitland": 0,
+            "nominatim": 0,
+            "errors": 0,
+            "by_ep": {},
+            "ip_ep": {},
+            "by_client": {},
+            "app_inbound": 0,
+            "app_transitland": 0,
+            "dup_inbound": 0,
+            "dup_transitland_saved": 0,
+            "_recent": {},  # dedupe-key → last ts seen
+        }
         for wname, _ in _WINDOWS
     }
     cutoffs = {wname: (now - delta) if delta else None for wname, delta in _WINDOWS}
+
+    # 14-day daily rollup: keyed by ISO date (YYYY-MM-DD).
+    daily = defaultdict(lambda: {"inbound": 0, "transitland": 0, "app": 0})
+    daily_cutoff = now - timedelta(days=14)
 
     oldest = None
     newest = None
@@ -116,6 +181,15 @@ def compute_stats(entries, now=None):
             newest = entry.ts
 
         label, tl, nom = _classify(entry)
+        kind = _client_kind(entry)
+        dkey = _dedupe_key(entry)
+
+        if entry.ts >= daily_cutoff and label not in ("internal", "other", "healthz"):
+            d = entry.ts.strftime("%Y-%m-%d")
+            daily[d]["inbound"] += 1
+            daily[d]["transitland"] += tl
+            if kind == "app":
+                daily[d]["app"] += 1
 
         for wname, _ in _WINDOWS:
             cutoff = cutoffs[wname]
@@ -128,12 +202,26 @@ def compute_stats(entries, now=None):
             if entry.status >= 500:
                 wd["errors"] += 1
             wd["by_ep"][label] = wd["by_ep"].get(label, 0) + 1
+            wd["by_client"][kind] = wd["by_client"].get(kind, 0) + 1
+            if kind == "app":
+                wd["app_inbound"] += 1
+                wd["app_transitland"] += tl
             ip_ep = wd["ip_ep"]
             if entry.ip not in ip_ep:
                 ip_ep[entry.ip] = {}
             ip_ep[entry.ip][label] = ip_ep[entry.ip].get(label, 0) + 1
 
-    result = {}
+            if dkey is not None:
+                # Same-key request from any client within cache TTL — these
+                # are requests a working cross-request response cache would
+                # have absorbed without a Transitland call.
+                last_ts = wd["_recent"].get(dkey)
+                if last_ts is not None and (entry.ts - last_ts).total_seconds() < _DUPLICATE_WINDOW_SECONDS:
+                    wd["dup_inbound"] += 1
+                    wd["dup_transitland_saved"] += tl
+                wd["_recent"][dkey] = entry.ts
+
+    windows = {}
     for wname, _ in _WINDOWS:
         wd = acc[wname]
         top_ips = sorted(
@@ -141,17 +229,30 @@ def compute_stats(entries, now=None):
              for ip, ep in wd["ip_ep"].items()],
             key=lambda x: -x["total"],
         )[:25]
-        result[wname] = {
-            "inbound_total":     wd["inbound"],
-            "unique_ips":        len(wd["ip_ep"]),
-            "transitland_calls": wd["transitland"],
-            "nominatim_calls":   wd["nominatim"],
-            "error_count":       wd["errors"],
-            "by_endpoint":       wd["by_ep"],
-            "top_ips":           top_ips,
+        windows[wname] = {
+            "inbound_total":         wd["inbound"],
+            "unique_ips":            len(wd["ip_ep"]),
+            "transitland_calls":     wd["transitland"],
+            "nominatim_calls":       wd["nominatim"],
+            "error_count":           wd["errors"],
+            "by_endpoint":           wd["by_ep"],
+            "by_client":             wd["by_client"],
+            "app_inbound":           wd["app_inbound"],
+            "app_transitland_calls": wd["app_transitland"],
+            "dup_inbound":           wd["dup_inbound"],
+            "dup_transitland_saved": wd["dup_transitland_saved"],
+            "top_ips":               top_ips,
         }
 
-    return result, oldest, newest
+    # Fill in any missing days in the 14-day window with zeros so the chart
+    # is continuous.
+    daily_out = []
+    for i in range(13, -1, -1):
+        d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        row = daily.get(d, {"inbound": 0, "transitland": 0, "app": 0})
+        daily_out.append({"date": d, **row})
+
+    return windows, oldest, newest, daily_out
 
 
 # single-slot cache: {"v": (result, cached_at_monotonic, cache_key)}
@@ -189,10 +290,11 @@ def load_stats():
             _log_missing_warned = True
 
     now = datetime.now(tz=timezone.utc)
-    windows, oldest, newest = compute_stats(_parse_entries(data), now)
+    windows, oldest, newest, daily = compute_stats(_parse_entries(data), now)
 
     result = {
         "windows":        windows,
+        "daily":          daily,
         "log_path":       path,
         "log_size_bytes": size,
         "oldest_entry":   oldest.isoformat() if oldest else None,
@@ -206,7 +308,8 @@ def load_stats():
 
 # ── HTML renderer ──────────────────────────────────────────────────────────────
 
-_ALL_ENDPOINTS = ["stops", "departures", "departures_batch", "geocode", "healthz", "other"]
+_ALL_ENDPOINTS = ["stops", "departures", "departures_batch", "geocode", "healthz", "internal", "other"]
+_ALL_CLIENTS = ["app", "browser", "unknown", "other"]
 
 _CSS = """
 body{font-family:monospace;background:#111;color:#ddd;margin:24px;font-size:13px}
@@ -219,8 +322,12 @@ th{background:#222;color:#bbb;text-align:center}
 td{text-align:right}
 td.lbl{text-align:left;color:#aaa}
 td.ip{text-align:left;font-size:12px;color:#ccc}
+td.bar{text-align:left;padding:0 4px}
+.bar-fill{display:inline-block;height:10px;background:#3d7a3d;vertical-align:middle}
+.bar-fill.tl{background:#3d5f7a}
 tr:hover td{background:#1a1a1a}
 .sep{margin:32px 0 0;border:none;border-top:1px solid #333}
+.note{color:#888;margin:4px 0 12px;font-size:12px}
 """
 
 
@@ -270,13 +377,73 @@ def render_html(stats: dict) -> str:
     parts.append(_th_row([""] + wlabels))
     rows = [
         ("Inbound requests", "inbound_total"),
+        ("  ↳ from app",     "app_inbound"),
         ("Unique IPs",       "unique_ips"),
         ("Transitland calls","transitland_calls"),
+        ("  ↳ from app",     "app_transitland_calls"),
         ("Nominatim calls",  "nominatim_calls"),
         ("Errors (5xx)",     "error_count"),
     ]
     for label, key in rows:
         parts.append(_td_row(label, [w[n][key] for n in wnames]))
+    parts.append("</table>")
+
+    # ── Cache-savings (duplicate requests within the proxy's response TTL) ──
+    parts.append("<h2>Cacheable duplicates (within 50s window)</h2>")
+    parts.append(
+        '<div class="note">Inbound requests with identical params seen '
+        'within the proxy response-cache TTL. With a working cross-request '
+        'cache, these would not have hit Transitland. High numbers mean the '
+        'in-process cache is being defeated (e.g. by CGI process churn).</div>'
+    )
+    parts.append("<table>")
+    parts.append(_th_row([""] + wlabels))
+    pct_row = []
+    for n in wnames:
+        inb = w[n]["inbound_total"]
+        dup = w[n]["dup_inbound"]
+        pct_row.append(f"{(100 * dup / inb):.0f}%" if inb else "—")
+    parts.append(_td_row("Duplicate inbound", [w[n]["dup_inbound"] for n in wnames]))
+    parts.append(_td_row("Duplicate TL calls saveable", [w[n]["dup_transitland_saved"] for n in wnames]))
+    parts.append("<tr><td class='lbl'>% inbound dup</td>" +
+                 "".join(f"<td>{p}</td>" for p in pct_row) + "</tr>")
+    parts.append("</table>")
+
+    # ── Daily timeline (last 14 days) ─────────────────────────────────────────
+    daily = stats.get("daily") or []
+    if daily:
+        max_inb = max((d["inbound"] for d in daily), default=0) or 1
+        max_tl = max((d["transitland"] for d in daily), default=0) or 1
+        parts.append("<h2>Daily timeline (last 14 days)</h2>")
+        parts.append(
+            '<div class="note">Excludes <code>/_internal</code>, '
+            '<code>/healthz</code>, and unknown paths.</div>'
+        )
+        parts.append("<table>")
+        parts.append(_th_row(["Date", "Inbound", "", "App", "TL calls", ""]))
+        for d in daily:
+            inb_bar = int(120 * d["inbound"] / max_inb)
+            tl_bar = int(120 * d["transitland"] / max_tl)
+            parts.append(
+                f"<tr><td class='lbl'>{d['date']}</td>"
+                f"<td>{_fmt(d['inbound'])}</td>"
+                f"<td class='bar'><span class='bar-fill' style='width:{inb_bar}px'></span></td>"
+                f"<td>{_fmt(d['app'])}</td>"
+                f"<td>{_fmt(d['transitland'])}</td>"
+                f"<td class='bar'><span class='bar-fill tl' style='width:{tl_bar}px'></span></td></tr>"
+            )
+        parts.append("</table>")
+
+    # ── Client breakdown ──────────────────────────────────────────────────────
+    parts.append("<h2>Client Breakdown</h2>")
+    parts.append("<table>")
+    parts.append(_th_row(["Client"] + wlabels))
+    all_clients = set()
+    for n in wnames:
+        all_clients.update(w[n].get("by_client", {}).keys())
+    cl_order = [c for c in _ALL_CLIENTS if c in all_clients] + sorted(all_clients - set(_ALL_CLIENTS))
+    for c in cl_order:
+        parts.append(_td_row(c, [w[n].get("by_client", {}).get(c, 0) for n in wnames]))
     parts.append("</table>")
 
     # ── Endpoint breakdown ────────────────────────────────────────────────────

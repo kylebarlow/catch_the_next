@@ -48,5 +48,9 @@ echo "==> Installing Python dependencies..."
 ssh "${NFSN_USER}@${NFSN_HOST}" \
   "pip3 install --upgrade --target ${REMOTE_PYLIB} -r ${REMOTE_SERVER}/requirements.txt"
 
+echo "==> Pre-compiling Python bytecode..."
+ssh "${NFSN_USER}@${NFSN_HOST}" \
+  "python3 -m compileall -q /home/protected/server /home/protected/pylib"
+
 echo ""
 echo "Deployed. Test your site URL at /healthz"

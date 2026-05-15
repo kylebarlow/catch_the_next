@@ -14,6 +14,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 class TransitlandClient(
@@ -33,65 +35,86 @@ class TransitlandClient(
         .build()
 
     private val gson = Gson()
+    private val inFlight = ConcurrentHashMap<String, CompletableFuture<Any>>()
 
-    override fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int, limit: Int): List<Stop> {
-        val url = "$baseUrl/stops".toHttpUrl().newBuilder()
-            .addQueryParameter("lat", lat.toString())
-            .addQueryParameter("lon", lon.toString())
-            .addQueryParameter("radius", radiusMeters.toString())
-            .addQueryParameter("limit", limit.toString())
-            .build()
-
-        val body = executeGet(url.toString())
-        val response = gson.fromJson(body, StopsResponse::class.java)
-        return response.stops.mapNotNull { it.toStop(fallbackLat = lat, fallbackLon = lon) }
-    }
-
-    override fun getDepartures(stopId: Long, nextSeconds: Int): StopDepartures {
-        val url = "$baseUrl/stops/$stopId/departures".toHttpUrl().newBuilder()
-            .addQueryParameter("next", nextSeconds.toString())
-            .addQueryParameter("relative_date", "TODAY")
-            .build()
-
-        val body = executeGet(url.toString())
-        val response = gson.fromJson(body, DeparturesResponse::class.java)
-        val departures = response.departures
-            .mapNotNull { it.toDeparture(stopId) }
-            .sortedBy { it.displayDepartureMinutes }
-        val alerts = response.alerts?.mapNotNull { it.toAlert() } ?: emptyList()
-        return StopDepartures(stopId, departures, alerts)
-    }
-
-    override fun geocodePlace(query: String, focusLat: Double?, focusLon: Double?, limit: Int): List<Place> {
-        val urlBuilder = "$baseUrl/geocode".toHttpUrl().newBuilder()
-            .addQueryParameter("q", query)
-            .addQueryParameter("limit", limit.toString())
-        if (focusLat != null && focusLon != null) {
-            urlBuilder
-                .addQueryParameter("focus_lat", focusLat.toString())
-                .addQueryParameter("focus_lon", focusLon.toString())
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> dedupe(key: String, supplier: () -> T): T {
+        val future = CompletableFuture<Any>()
+        val existing = inFlight.putIfAbsent(key, future)
+        if (existing != null) return existing.get() as T
+        return try {
+            val result = supplier()
+            future.complete(result)
+            result
+        } catch (e: Exception) {
+            future.completeExceptionally(e)
+            throw e
+        } finally {
+            inFlight.remove(key, future)
         }
-        val body = executeGet(urlBuilder.build().toString())
-        val response = gson.fromJson(body, PlacesResponse::class.java)
-        return response.places.map { it.toPlace() }
     }
+
+    override fun getNearbyStops(lat: Double, lon: Double, radiusMeters: Int, limit: Int): List<Stop> =
+        dedupe("stops:$lat:$lon:$radiusMeters:$limit") {
+            val url = "$baseUrl/stops".toHttpUrl().newBuilder()
+                .addQueryParameter("lat", lat.toString())
+                .addQueryParameter("lon", lon.toString())
+                .addQueryParameter("radius", radiusMeters.toString())
+                .addQueryParameter("limit", limit.toString())
+                .build()
+            val body = executeGet(url.toString())
+            val response = gson.fromJson(body, StopsResponse::class.java)
+            response.stops.mapNotNull { it.toStop(fallbackLat = lat, fallbackLon = lon) }
+        }
+
+    override fun getDepartures(stopId: Long, nextSeconds: Int): StopDepartures =
+        dedupe("dep:$stopId:$nextSeconds") {
+            val url = "$baseUrl/stops/$stopId/departures".toHttpUrl().newBuilder()
+                .addQueryParameter("next", nextSeconds.toString())
+                .addQueryParameter("relative_date", "TODAY")
+                .build()
+            val body = executeGet(url.toString())
+            val response = gson.fromJson(body, DeparturesResponse::class.java)
+            val departures = response.departures
+                .mapNotNull { it.toDeparture(stopId) }
+                .sortedBy { it.displayDepartureMinutes }
+            val alerts = response.alerts?.mapNotNull { it.toAlert() } ?: emptyList()
+            StopDepartures(stopId, departures, alerts)
+        }
+
+    override fun geocodePlace(query: String, focusLat: Double?, focusLon: Double?, limit: Int): List<Place> =
+        dedupe("geo:$query:$focusLat:$focusLon:$limit") {
+            val urlBuilder = "$baseUrl/geocode".toHttpUrl().newBuilder()
+                .addQueryParameter("q", query)
+                .addQueryParameter("limit", limit.toString())
+            if (focusLat != null && focusLon != null) {
+                urlBuilder
+                    .addQueryParameter("focus_lat", focusLat.toString())
+                    .addQueryParameter("focus_lon", focusLon.toString())
+            }
+            val body = executeGet(urlBuilder.build().toString())
+            val response = gson.fromJson(body, PlacesResponse::class.java)
+            response.places.map { it.toPlace() }
+        }
 
     override fun getDeparturesBatch(onestopIds: List<String>, nextSeconds: Int): Map<String, StopDepartures> {
         if (onestopIds.isEmpty()) return emptyMap()
-        val url = "$baseUrl/departures".toHttpUrl().newBuilder()
-            .addQueryParameter("onestop_ids", onestopIds.joinToString(","))
-            .addQueryParameter("next", nextSeconds.toString())
-            .build()
-
-        val body = executeGet(url.toString())
-        val response = gson.fromJson(body, BatchDeparturesResponse::class.java)
-        return response.stops.mapNotNull { batchStop ->
-            val onestopId = batchStop.onestopId ?: return@mapNotNull null
-            val deps = batchStop.departures.mapNotNull { it.toDeparture(0L) }
-                .sortedBy { it.displayDepartureMinutes }
-            val alerts = batchStop.alerts?.mapNotNull { it.toAlert() } ?: emptyList()
-            Pair(onestopId, StopDepartures(0L, deps, alerts))
-        }.toMap()
+        val key = "depbatch:${onestopIds.sorted().joinToString(",")}:$nextSeconds"
+        return dedupe(key) {
+            val url = "$baseUrl/departures".toHttpUrl().newBuilder()
+                .addQueryParameter("onestop_ids", onestopIds.joinToString(","))
+                .addQueryParameter("next", nextSeconds.toString())
+                .build()
+            val body = executeGet(url.toString())
+            val response = gson.fromJson(body, BatchDeparturesResponse::class.java)
+            response.stops.mapNotNull { batchStop ->
+                val onestopId = batchStop.onestopId ?: return@mapNotNull null
+                val deps = batchStop.departures.mapNotNull { it.toDeparture(0L) }
+                    .sortedBy { it.displayDepartureMinutes }
+                val alerts = batchStop.alerts?.mapNotNull { it.toAlert() } ?: emptyList()
+                Pair(onestopId, StopDepartures(0L, deps, alerts))
+            }.toMap()
+        }
     }
 
     private fun executeGet(url: String): String {

@@ -1,34 +1,17 @@
 import json
 import math
+import socket
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-import requests
+
 import bottle
+import cache
 from config import load_config
-
-_RESPONSE_CACHE_TTL = 50
-_response_cache: dict = {}
-_response_cache_lock = threading.Lock()
-
-
-def _cache_get(key):
-    with _response_cache_lock:
-        entry = _response_cache.get(key)
-        if entry and time.monotonic() - entry[0] < _RESPONSE_CACHE_TTL:
-            return entry[1]
-    return None
-
-
-def _cache_set(key, value):
-    with _response_cache_lock:
-        _response_cache[key] = (time.monotonic(), value)
-        if len(_response_cache) > 256:
-            now = time.monotonic()
-            expired = [k for k, v in _response_cache.items() if now - v[0] >= _RESPONSE_CACHE_TTL]
-            for k in expired:
-                del _response_cache[k]
 
 __version__ = "1.0"
 
@@ -38,18 +21,72 @@ _api_key = _cfg["TRANSITLAND_API_KEY"]
 _connect_timeout = _cfg["UPSTREAM_CONNECT_TIMEOUT"]
 _read_timeout = _cfg["UPSTREAM_READ_TIMEOUT"]
 
-_session = requests.Session()
-_session.headers.update({
-    "User-Agent": f"CatchTheNext-Proxy/{__version__} (+https://codeberg.org/ursidaureus/catch_the_next)"
-})
+_USER_AGENT = f"CatchTheNext-Proxy/{__version__} (+https://codeberg.org/ursidaureus/catch_the_next)"
 
 _NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
-_nominatim_session = requests.Session()
-_nominatim_session.headers.update({
-    "User-Agent": f"CatchTheNext-Proxy/{__version__} (+https://codeberg.org/ursidaureus/catch_the_next)"
-})
 _nominatim_lock = threading.Lock()
 _nominatim_last_call = 0.0
+
+# Response-cache TTL (seconds) used for departure/stop query results.
+_RESPONSE_CACHE_TTL = 50
+# Geocode results change rarely; 1h is safe.
+_GEOCODE_CACHE_TTL = 3600
+# onestop_id → integer_id mappings are stable across feed updates; only
+# invalidated on 404 from the downstream departures call.
+_STOP_ID_CACHE_TTL = 86400 * 30  # 30 days
+
+_BATCH_MAX_STOPS = 6
+
+
+def _http_get_json(url: str, params: dict | None = None,
+                   headers: dict | None = None,
+                   timeout: tuple | None = None,
+                   allow_404: bool = False):
+    """GET *url* with optional query *params*, return parsed JSON body.
+
+    Raises bottle.HTTPResponse 504 on timeout, 502 on other errors.
+    If *allow_404* is True, returns None when the server responds 404
+    (used to detect stale cached stop integer IDs).
+    """
+    if params:
+        url = url + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", _USER_AGENT)
+    if headers:
+        for k, v in headers.items():
+            req.add_header(k, v)
+
+    connect_t, read_t = (timeout if timeout else (_connect_timeout, _read_timeout))
+    try:
+        with urllib.request.urlopen(req, timeout=connect_t + read_t) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if allow_404 and e.code == 404:
+            return None
+        print(f"upstream HTTP {e.code} for {url}", file=sys.stderr)
+        raise bottle.HTTPResponse(
+            body=json.dumps({"error": "upstream", "status": e.code}),
+            status=502,
+            headers={"Content-Type": "application/json"},
+        )
+    except (socket.timeout, TimeoutError):
+        raise bottle.HTTPResponse(
+            body='{"error":"upstream_timeout"}', status=504,
+            headers={"Content-Type": "application/json"},
+        )
+    except (urllib.error.URLError, OSError) as e:
+        print(f"upstream error: {e}", file=sys.stderr)
+        raise bottle.HTTPResponse(
+            body='{"error":"upstream"}', status=502,
+            headers={"Content-Type": "application/json"},
+        )
+
+
+def _upstream_get(path: str, params: dict, allow_404: bool = False):
+    params = dict(params)
+    params["apikey"] = _api_key
+    url = f"{_base_url}/{path}"
+    return _http_get_json(url, params=params, allow_404=allow_404)
 
 
 def _nominatim_throttle():
@@ -62,34 +99,6 @@ def _nominatim_throttle():
         _nominatim_last_call = time.monotonic()
 
 
-def _upstream_get(path, params):
-    params = dict(params)
-    params["apikey"] = _api_key
-    url = f"{_base_url}/{path}"
-    try:
-        resp = _session.get(url, params=params, timeout=(_connect_timeout, _read_timeout))
-    except requests.Timeout:
-        raise bottle.HTTPResponse(
-            body='{"error":"upstream_timeout"}', status=504,
-            headers={"Content-Type": "application/json"},
-        )
-    except requests.RequestException as e:
-        print(f"upstream error: {e}", file=sys.stderr)
-        raise bottle.HTTPResponse(
-            body='{"error":"upstream"}', status=502,
-            headers={"Content-Type": "application/json"},
-        )
-
-    if not resp.ok:
-        raise bottle.HTTPResponse(
-            body=json.dumps({"error": "upstream", "status": resp.status_code}),
-            status=502,
-            headers={"Content-Type": "application/json"},
-        )
-
-    return resp.json()
-
-
 # Upstream sorts by stop_name, not distance — so a low limit can truncate the
 # closest stops if many alphabetically-earlier stops are within radius. Always
 # fetch a wide candidate set, then sort by distance and trim to `limit`.
@@ -98,6 +107,11 @@ _UPSTREAM_STOPS_LIMIT = 100
 
 def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=None):
     limit = min(int(limit), 10)
+    cache_key = f"geo:{query}:{focus_lat}:{focus_lon}:{limit}:{accept_language}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     params = {
         "q": query,
         "format": "jsonv2",
@@ -113,31 +127,15 @@ def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=Non
         headers["Accept-Language"] = accept_language
 
     _nominatim_throttle()
-    url = f"{_NOMINATIM_BASE_URL}/search"
-    try:
-        resp = _nominatim_session.get(url, params=params, headers=headers,
-                                      timeout=(_connect_timeout, _read_timeout))
-    except requests.Timeout:
-        raise bottle.HTTPResponse(
-            body='{"error":"upstream_timeout"}', status=504,
-            headers={"Content-Type": "application/json"},
-        )
-    except requests.RequestException as e:
-        print(f"nominatim error: {e}", file=sys.stderr)
-        raise bottle.HTTPResponse(
-            body='{"error":"upstream"}', status=502,
-            headers={"Content-Type": "application/json"},
-        )
-
-    if not resp.ok:
-        raise bottle.HTTPResponse(
-            body=json.dumps({"error": "upstream", "status": resp.status_code}),
-            status=502,
-            headers={"Content-Type": "application/json"},
-        )
+    data = _http_get_json(
+        f"{_NOMINATIM_BASE_URL}/search",
+        params=params,
+        headers=headers,
+        timeout=(_connect_timeout, _read_timeout),
+    )
 
     places = []
-    for item in resp.json():
+    for item in data:
         places.append({
             "place_id": str(item.get("place_id", "")),
             "display_name": item.get("display_name", ""),
@@ -146,19 +144,21 @@ def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=Non
             "category": item.get("category"),
             "type": item.get("type"),
         })
-    return {"places": places}
+    result = {"places": places}
+    cache.set(cache_key, result, _GEOCODE_CACHE_TTL)
+    return result
 
 
 def get_stops(lat, lon, radius=500, limit=20):
     radius = min(int(radius), 5000)
     limit = min(int(limit), 50)
     cache_key = f"stops:{lat}:{lon}:{radius}"
-    data = _cache_get(cache_key)
+    data = cache.get(cache_key)
     if data is None:
         data = _upstream_get("stops", {
             "lat": lat, "lon": lon, "radius": radius, "limit": _UPSTREAM_STOPS_LIMIT,
         })
-        _cache_set(cache_key, data)
+        cache.set(cache_key, data, _RESPONSE_CACHE_TTL)
 
     stops = []
     for s in data.get("stops", []):
@@ -347,42 +347,68 @@ def _shape_departures(data):
     return departures
 
 
-def get_departures(stop_id, next_seconds=7200):
+def get_departures(stop_id, next_seconds=3600):
     next_seconds = min(int(next_seconds), 86400)
+    cache_key = f"dep:{stop_id}:{next_seconds}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
     data = _upstream_get(
         f"stops/{stop_id}/departures",
         {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
     )
-    return {"departures": _shape_departures(data), "alerts": _shape_alerts(data)}
+    result = {"departures": _shape_departures(data), "alerts": _shape_alerts(data)}
+    cache.set(cache_key, result, _RESPONSE_CACHE_TTL)
+    return result
 
 
-_BATCH_MAX_STOPS = 6
+def _resolve_stop_id(oid: str):
+    """Return the integer stop ID for *oid*, using a long-lived SQLite cache.
 
-
-def get_departures_by_onestop_ids(onestop_ids, next_seconds=7200):
-    next_seconds = min(int(next_seconds), 86400)
-    cache_key = f"departures:{','.join(sorted(onestop_ids))}:{next_seconds}"
-    cached = _cache_get(cache_key)
+    Returns None if Transitland doesn't know the onestop_id.
+    """
+    cache_key = f"oid:{oid}"
+    cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
-    # Transitland's /stops endpoint takes a single onestop_id per call (a
-    # comma-joined value matches nothing), so resolve each id in parallel.
-    def _resolve(oid):
-        data = _upstream_get("stops", {"onestop_id": oid, "limit": 1})
-        for s in data.get("stops", []):
-            if s.get("onestop_id") == oid and s.get("id"):
-                return oid, s["id"]
-        return oid, None
+    data = _upstream_get("stops", {"onestop_id": oid, "limit": 1})
+    for s in (data or {}).get("stops", []):
+        if s.get("onestop_id") == oid and s.get("id"):
+            integer_id = s["id"]
+            cache.set(cache_key, integer_id, _STOP_ID_CACHE_TTL)
+            return integer_id
+    return None
 
-    def _fetch(oid_iid):
-        oid, integer_id = oid_iid
+
+def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
+    next_seconds = min(int(next_seconds), 86400)
+    cache_key = f"departures:{','.join(sorted(onestop_ids))}:{next_seconds}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _fetch_one(oid: str):
+        integer_id = _resolve_stop_id(oid)
         if integer_id is None:
             return {"onestop_id": oid, "departures": [], "alerts": []}
+
         data = _upstream_get(
             f"stops/{integer_id}/departures",
             {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
+            allow_404=True,
         )
+        if data is None:
+            # 404 means the integer_id is stale — evict and re-resolve once.
+            cache.delete(f"oid:{oid}")
+            integer_id = _resolve_stop_id(oid)
+            if integer_id is None:
+                return {"onestop_id": oid, "departures": [], "alerts": []}
+            data = _upstream_get(
+                f"stops/{integer_id}/departures",
+                {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
+            )
+
         return {
             "onestop_id": oid,
             "departures": _shape_departures(data),
@@ -390,10 +416,10 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=7200):
         }
 
     with ThreadPoolExecutor(max_workers=max(len(onestop_ids), 1)) as pool:
-        resolved = list(pool.map(_resolve, onestop_ids))
-        stops = list(pool.map(_fetch, resolved))
+        stops = list(pool.map(_fetch_one, onestop_ids))
+
     result = {"stops": stops}
-    _cache_set(cache_key, result)
+    cache.set(cache_key, result, _RESPONSE_CACHE_TTL)
     return result
 
 

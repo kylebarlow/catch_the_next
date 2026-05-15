@@ -14,6 +14,7 @@ def load_config():
         "STATS_PATH_SECRET": os.environ.get("STATS_PATH_SECRET", ""),
         "STATS_MAX_LOG_BYTES": int(os.environ.get("STATS_MAX_LOG_BYTES", "50000000")),
         "STATS_CACHE_SECONDS": int(os.environ.get("STATS_CACHE_SECONDS", "30")),
+        "CACHE_DB_PATH": os.environ.get("CACHE_DB_PATH", "/home/protected/cache.sqlite"),
     }
 
     missing = []
