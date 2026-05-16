@@ -2,14 +2,14 @@ package dev.catchthenext.phone
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.glance.appwidget.updateAll
-import dev.catchthenext.phone.widget.DeparturesWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -46,7 +46,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        CoroutineScope(Dispatchers.IO).launch { DeparturesWidget().updateAll(applicationContext) }
         CoroutineScope(Dispatchers.IO).launch {
             FavoritesSyncListener.coldStartReconcile(
                 applicationContext,
@@ -55,12 +54,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.data?.takeIf { it.scheme == "catchthenext" && it.host == "stop" }
+            ?.lastPathSegment
+            ?.let { PhoneGraph.pendingDeepLinkStopId = it }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val missing = arrayOf(
+        // Handle deep link from a notification tap
+        intent?.data?.takeIf { it.scheme == "catchthenext" && it.host == "stop" }
+            ?.lastPathSegment
+            ?.let { PhoneGraph.pendingDeepLinkStopId = it }
+
+        val missing = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
-        ).filter {
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isNotEmpty()) locationPermissionLauncher.launch(missing.toTypedArray())
@@ -76,6 +91,18 @@ class MainActivity : ComponentActivity() {
 
 @androidx.compose.runtime.Composable
 private fun PhoneNavGraph(navController: NavHostController, factory: PhoneViewModelFactory) {
+    // Consume any pending deep link (e.g. from a Live Update notification tap)
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        PhoneGraph.pendingDeepLinkStopId?.let { onestopId ->
+            PhoneGraph.pendingDeepLinkStopId = null
+            // onestopId may be a Long stopId or an onestop string; try Long first
+            val stopId = onestopId.toLongOrNull()
+            if (stopId != null) {
+                navController.navigate("details/$stopId")
+            }
+        }
+    }
+
     NavHost(navController = navController, startDestination = "departures") {
         composable("departures") {
             val vm: DeparturesViewModel = viewModel(factory = factory)

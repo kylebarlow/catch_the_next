@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <application
         android:name=".PhoneApp"
@@ -16,10 +19,16 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="catchthenext" android:host="stop" />
             </intent-filter>
         </activity>
 
@@ -35,14 +44,44 @@
             </intent-filter>
         </service>
 
-        <receiver android:name=".widget.DeparturesWidgetReceiver" android:exported="true">
+        <service
+            android:name=".liveupdate.LiveUpdateService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <receiver
+            android:name=".liveupdate.LiveUpdateActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="dev.catchthenext.phone.ACTION_STOP_LIVE_UPDATE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver android:name=".widget.FavoriteStopWidgetReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/departures_widget_info" />
+                android:resource="@xml/favorite_stop_widget_info" />
         </receiver>
+
+        <receiver android:name=".widget.ClosestFavoriteWidgetReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/closest_favorite_widget_info" />
+        </receiver>
+
+        <activity
+            android:name=".widget.FavoriteStopWidgetConfigActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
 
     </application>
 </manifest>

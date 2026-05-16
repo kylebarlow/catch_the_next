@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Catch The Next</string>
+    <string name="favorite_stop_widget_description">Track departures for a favorite stop</string>
+    <string name="closest_stop_widget_description">Track departures for the nearest favorite stop</string>
+    <string name="live_update_stop_action">Stop tracking</string>
 </resources>

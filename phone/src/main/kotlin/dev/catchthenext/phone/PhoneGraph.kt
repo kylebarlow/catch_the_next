@@ -8,13 +8,18 @@ import dev.catchthenext.android.sync.SyncStateStore
 import dev.catchthenext.api.TransitApi
 import dev.catchthenext.api.TransitlandClient
 import dev.catchthenext.model.Stop
+import dev.catchthenext.phone.liveupdate.LiveUpdateController
+import dev.catchthenext.phone.liveupdate.LiveUpdateStateStore
 
 object PhoneGraph {
     @Volatile private var clientRef: TransitApi? = null
     @Volatile private var syncStateStoreRef: SyncStateStore? = null
     @Volatile private var favoritesManagerRef: SyncedFavoritesManager? = null
+    @Volatile private var liveUpdateStateStoreRef: LiveUpdateStateStore? = null
+    @Volatile private var liveUpdateControllerRef: LiveUpdateController? = null
     @Volatile private var appCtx: Context? = null
     @Volatile var pendingConfirmStop: Stop? = null
+    @Volatile var pendingDeepLinkStopId: String? = null
 
     fun init(ctx: Context) {
         appCtx = ctx.applicationContext
@@ -40,5 +45,16 @@ object PhoneGraph {
 
     fun favoritesManager(ctx: Context): SyncedFavoritesManager = favoritesManagerRef ?: synchronized(this) {
         favoritesManagerRef ?: SyncedFavoritesManager(syncStateStore(ctx)).also { favoritesManagerRef = it }
+    }
+
+    fun liveUpdateStateStore(ctx: Context): LiveUpdateStateStore = liveUpdateStateStoreRef ?: synchronized(this) {
+        liveUpdateStateStoreRef ?: LiveUpdateStateStore(ctx.applicationContext).also { liveUpdateStateStoreRef = it }
+    }
+
+    fun liveUpdateController(ctx: Context): LiveUpdateController = liveUpdateControllerRef ?: synchronized(this) {
+        liveUpdateControllerRef ?: LiveUpdateController(
+            ctx.applicationContext,
+            liveUpdateStateStore(ctx),
+        ).also { liveUpdateControllerRef = it }
     }
 }

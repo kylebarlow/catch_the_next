@@ -9,12 +9,12 @@ plugins {
 
 android {
     namespace = "dev.catchthenext.phone"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "dev.catchthenext"
-        minSdk = 30
-        targetSdk = 35
+        minSdk = 36
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
     }
@@ -59,6 +59,8 @@ dependencies {
     implementation(libs.navigation.compose)
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
+    implementation(libs.play.services.location)
+    implementation(libs.coroutines.play.services)
 }
 
 tasks.withType<Test> {
