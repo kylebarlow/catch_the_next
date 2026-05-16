@@ -12,11 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.DirectionsBus
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -33,7 +29,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -44,7 +39,6 @@ import dev.catchthenext.android.ui.DetailsUi
 import dev.catchthenext.android.ui.StopDetailsViewModel
 import dev.catchthenext.model.Alert
 import dev.catchthenext.model.AlertSeverity
-import dev.catchthenext.phone.PhoneGraph
 
 @Composable
 private fun AlertCard(alert: Alert) {
@@ -80,9 +74,6 @@ private fun AlertCard(alert: Alert) {
 @Composable
 fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewModel) {
     val ui by viewModel.ui.collectAsState()
-    val context = LocalContext.current
-    val controller = PhoneGraph.liveUpdateController(context)
-    val trackingState by controller.trackingState.collectAsState()
 
     val title = when (val s = ui) {
         is DetailsUi.Loaded -> s.stop.stopName
@@ -98,30 +89,6 @@ fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewMo
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                actions = {
-                    if (ui is DetailsUi.Loaded) {
-                        val loaded = ui as DetailsUi.Loaded
-                        val isTracking = trackingState?.stopId == loaded.stop.id
-                        IconButton(onClick = {
-                            if (isTracking) controller.stop()
-                            else controller.start(loaded.stop)
-                        }) {
-                            Icon(
-                                imageVector = if (isTracking) Icons.Default.DirectionsBus else Icons.Outlined.DirectionsBus,
-                                contentDescription = if (isTracking) "Stop tracking" else "Track departures",
-                            )
-                        }
-                        IconButton(onClick = {
-                            viewModel.toggleFavorite()
-                            if (loaded.isFavorite) navController.popBackStack()
-                        }) {
-                            Icon(
-                                imageVector = if (loaded.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = if (loaded.isFavorite) "Remove favorite" else "Add favorite",
-                            )
-                        }
-                    }
-                }
             )
         }
     ) { padding ->

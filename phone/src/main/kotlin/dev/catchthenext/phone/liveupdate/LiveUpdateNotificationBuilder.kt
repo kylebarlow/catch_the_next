@@ -24,9 +24,9 @@ fun buildLiveUpdateNotification(
     }
 
     val contentText = buildString {
-        nextDepartures.take(3).forEach { dep ->
+        nextDepartures.take(2).forEach { dep ->
             val m = (dep.departureEpochMillis - nowMs) / 60_000
-            if (isNotEmpty()) append("  ")
+            if (isNotEmpty()) append("\n")
             append(dep.routeShortName)
             if (dep.headsign.isNotBlank()) append(" → ${dep.headsign}")
             append(" ${if (m <= 0) "now" else "${m}m"}")

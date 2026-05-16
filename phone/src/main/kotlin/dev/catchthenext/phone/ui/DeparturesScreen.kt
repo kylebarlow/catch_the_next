@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,8 +21,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DirectionsBus
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -59,6 +63,8 @@ import dev.catchthenext.android.tile.groupDepartures
 import dev.catchthenext.android.tile.timeLabel
 import dev.catchthenext.android.ui.DeparturesUi
 import dev.catchthenext.android.ui.DeparturesViewModel
+import dev.catchthenext.model.Stop
+import dev.catchthenext.phone.PhoneGraph
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +72,8 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
     val ui by viewModel.ui.collectAsState()
     val isRefreshing = ui is DeparturesUi.Loaded && (ui as DeparturesUi.Loaded).isRefreshing
     val context = LocalContext.current
+    val controller = PhoneGraph.liveUpdateController(context)
+    val trackingState by controller.trackingState.collectAsState()
 
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -91,11 +99,26 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
 
     var menuExpanded by remember { mutableStateOf(false) }
 
+    val isTracking = trackingState != null
+    val readyState = (ui as? DeparturesUi.Loaded)?.tileState as? TileState.Ready
+    val closestStop = readyState?.stops?.firstOrNull()?.stop
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Catch The Next") },
                 actions = {
+                    if (isTracking || closestStop != null) {
+                        IconButton(onClick = {
+                            if (isTracking) controller.stop()
+                            else closestStop?.let { controller.start(it) }
+                        }) {
+                            Icon(
+                                imageVector = if (isTracking) Icons.Default.DirectionsBus else Icons.Outlined.DirectionsBus,
+                                contentDescription = if (isTracking) "Stop tracking" else "Track departures",
+                            )
+                        }
+                    }
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "More")
                     }
@@ -123,14 +146,16 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
                 is DeparturesUi.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                is DeparturesUi.Loaded -> DeparturesContent(state.tileState, navController)
+                is DeparturesUi.Loaded -> DeparturesContent(state.tileState, navController) { stop ->
+                    controller.start(stop)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DeparturesContent(state: TileState, navController: NavController) {
+private fun DeparturesContent(state: TileState, navController: NavController, onTrack: (Stop) -> Unit) {
     Box(modifier = Modifier.fillMaxSize()) {
         when (state) {
             is TileState.NoPermission -> CenteredMessage("Location permission required")
@@ -144,13 +169,13 @@ private fun DeparturesContent(state: TileState, navController: NavController) {
             }
             is TileState.NoLocation -> CenteredMessage("Getting location…")
             is TileState.NetworkError -> CenteredMessage("Network error: ${state.message}")
-            is TileState.Ready -> ReadyContent(state)
+            is TileState.Ready -> ReadyContent(state, onTrack)
         }
     }
 }
 
 @Composable
-private fun ReadyContent(state: TileState.Ready) {
+private fun ReadyContent(state: TileState.Ready, onTrack: (Stop) -> Unit) {
     val groups = groupDepartures(
         stops = state.stops,
         filter = { it.currentMinutes() in 0..59 },
@@ -163,7 +188,7 @@ private fun ReadyContent(state: TileState.Ready) {
         if (groups.isEmpty()) {
             item { Text("No departures in the next hour") }
         } else {
-            items(groups) { group -> DepartureCard(group, multiAgency) }
+            items(groups) { group -> DepartureCard(group, multiAgency, onTrack = { onTrack(group.stop) }) }
         }
         item {
             Text(
@@ -176,14 +201,15 @@ private fun ReadyContent(state: TileState.Ready) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DepartureCard(group: GroupedDeparture, showAgency: Boolean = false) {
+private fun DepartureCard(group: GroupedDeparture, showAgency: Boolean = false, onTrack: () -> Unit) {
     val routeLabel = buildString {
         append(group.routeShortName)
         if (group.headsign.isNotBlank()) append(" → ${group.headsign}")
         if (group.showStopTag) append(" · ${group.stopName}")
     }
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = onTrack)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 if (group.hasAlert) {
