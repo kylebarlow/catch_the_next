@@ -31,7 +31,7 @@ def _connect() -> sqlite3.Connection:
         db = sqlite3.connect(_MEMORY_URI, uri=True, check_same_thread=False, timeout=5)
     else:
         db = sqlite3.connect(_db_path, timeout=5)
-    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA journal_mode=DELETE")
     db.execute(_DDL)
     return db
 
