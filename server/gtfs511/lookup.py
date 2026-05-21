@@ -284,10 +284,16 @@ def _fetch_agencies(static_db) -> dict:
     )}
 
 
-def _parse_gtfs_time(s: str | None) -> int | None:
-    """Parse GTFS HH:MM:SS (may exceed 24h) to seconds since service-day midnight."""
-    if not s:
+def _parse_gtfs_time(s) -> int | None:
+    """Parse GTFS departure_time to seconds since service-day midnight.
+
+    Accepts either a pre-converted integer (stored in the DB) or an
+    HH:MM:SS string (may exceed 24h for post-midnight trips).
+    """
+    if s is None:
         return None
+    if isinstance(s, int):
+        return s
     try:
         h, m, sec = s.split(":")
         return int(h) * 3600 + int(m) * 60 + int(sec)

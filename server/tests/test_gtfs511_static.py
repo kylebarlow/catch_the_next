@@ -81,6 +81,38 @@ def test_static_refreshed_at_returns_none_when_missing(tmp_path):
     assert static_db.static_refreshed_at(str(tmp_path / "absent.sqlite")) is None
 
 
+def test_stop_times_pruned_outside_service_window(tmp_path):
+    """Stop-times whose service_id falls entirely outside the 9-day window are dropped."""
+    # Service dates in the distant past — well outside [today-1, today+7].
+    zip_bytes = make_static_gtfs_zip(service_dates=["20200101", "20200102"])
+    target = str(tmp_path / "static.sqlite")
+    metrics = static_db.build_static_db(zip_bytes, target)
+    # All stop_times should be pruned; trips and other tables are unaffected.
+    assert metrics.rows_per_table["stop_times"] == 0
+    assert metrics.rows_per_table["trips"] == 2  # trips table is not filtered
+
+
+def test_departure_time_stored_as_integer(tmp_path):
+    """departure_time must be stored as INTEGER seconds, not a time string."""
+    zip_bytes = make_static_gtfs_zip(
+        service_dates=[_today_yyyymmdd()], departure_time="10:30:00"
+    )
+    target = str(tmp_path / "static.sqlite")
+    static_db.build_static_db(zip_bytes, target)
+
+    db = sqlite3.connect(target)
+    try:
+        row = db.execute(
+            "SELECT departure_time FROM stop_times LIMIT 1"
+        ).fetchone()
+        assert row is not None
+        val = row[0]
+        assert isinstance(val, int), f"expected int, got {type(val).__name__}: {val!r}"
+        assert val == 10 * 3600 + 30 * 60  # 10:30:00 = 37800 seconds
+    finally:
+        db.close()
+
+
 def test_missing_required_table_raises(tmp_path):
     # A zip without agency.txt should fail loudly.
     import io

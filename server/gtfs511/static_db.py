@@ -19,15 +19,21 @@ import tempfile
 import time
 import zipfile
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 # Tables we ingest. ``required`` means the build fails if the file is missing.
 # Each entry: (gtfs_filename, table_name, required, columns)
+#
+# stop_times: arrival_time, pickup_type, drop_off_type omitted (unused by
+# lookup.py).  departure_time is stored as INTEGER seconds since service-day
+# midnight (converted during ingest).  Rows are also pruned to the active
+# service window — see _compute_active_trip_ids().
 _TABLES = [
     ("agency.txt",         "agency",         True,  ["agency_id", "agency_name", "agency_url", "agency_timezone"]),
     ("routes.txt",         "routes",         True,  ["route_id", "agency_id", "route_short_name", "route_long_name", "route_type"]),
     ("stops.txt",          "stops",          True,  ["stop_id", "stop_code", "stop_name", "stop_lat", "stop_lon", "parent_station", "location_type"]),
     ("trips.txt",          "trips",          True,  ["trip_id", "route_id", "service_id", "trip_headsign", "direction_id", "block_id", "shape_id"]),
-    ("stop_times.txt",     "stop_times",     True,  ["trip_id", "arrival_time", "departure_time", "stop_id", "stop_sequence", "pickup_type", "drop_off_type"]),
+    ("stop_times.txt",     "stop_times",     True,  ["trip_id", "departure_time", "stop_id", "stop_sequence"]),
     ("calendar.txt",       "calendar",       False, ["service_id", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "start_date", "end_date"]),
     ("calendar_dates.txt", "calendar_dates", False, ["service_id", "date", "exception_type"]),
 ]
@@ -43,9 +49,90 @@ class StaticBuildMetrics:
     sqlite_path: str
 
 
-def _ddl_for(table: str, cols: list[str]) -> str:
-    col_defs = ", ".join(f'"{c}" TEXT' for c in cols)
+def _ddl_for(
+    table: str, cols: list[str], integer_cols: frozenset[str] = frozenset()
+) -> str:
+    col_defs = ", ".join(
+        f'"{c}" INTEGER' if c in integer_cols else f'"{c}" TEXT'
+        for c in cols
+    )
     return f'CREATE TABLE "{table}" ({col_defs})'
+
+
+def _gtfs_time_to_secs(s: str | None) -> int | None:
+    """Convert GTFS HH:MM:SS (may exceed 24h) to integer seconds since midnight."""
+    if not s:
+        return None
+    try:
+        h, m, sec = s.split(":")
+        return int(h) * 3600 + int(m) * 60 + int(sec)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _compute_active_trip_ids(
+    zf: zipfile.ZipFile, available: set[str]
+) -> frozenset[str] | None:
+    """Return trip_ids whose service overlaps [today-1, today+7], or None to skip.
+
+    Returns None when calendar data is absent or unparseable — caller should
+    ingest all stop_times without filtering.  Returns an empty frozenset when
+    calendar data exists but nothing falls in the window (legitimate gap).
+    """
+    if "trips.txt" not in available:
+        return None
+    if "calendar.txt" not in available and "calendar_dates.txt" not in available:
+        return None
+
+    window_start = (date.today() - timedelta(days=1)).strftime("%Y%m%d")
+    window_end = (date.today() + timedelta(days=7)).strftime("%Y%m%d")
+    active_sids: set[str] = set()
+
+    if "calendar.txt" in available:
+        rows = list(_read_csv(zf, "calendar.txt"))
+        if rows:
+            hdr = rows[0]
+            try:
+                si = hdr.index("service_id")
+                sti = hdr.index("start_date")
+                ei = hdr.index("end_date")
+                for row in rows[1:]:
+                    if len(row) > max(si, sti, ei):
+                        if row[sti] <= window_end and row[ei] >= window_start:
+                            active_sids.add(row[si])
+            except ValueError:
+                pass
+
+    if "calendar_dates.txt" in available:
+        rows = list(_read_csv(zf, "calendar_dates.txt"))
+        if rows:
+            hdr = rows[0]
+            try:
+                si = hdr.index("service_id")
+                di = hdr.index("date")
+                xi = hdr.index("exception_type")
+                for row in rows[1:]:
+                    if len(row) > max(si, di, xi):
+                        if row[xi] == "1" and window_start <= row[di] <= window_end:
+                            active_sids.add(row[si])
+            except ValueError:
+                pass
+
+    trip_ids: set[str] = set()
+    rows = list(_read_csv(zf, "trips.txt"))
+    if not rows:
+        return None
+    hdr = rows[0]
+    try:
+        ti = hdr.index("trip_id")
+        si = hdr.index("service_id")
+        for row in rows[1:]:
+            if len(row) > max(ti, si) and row[si] in active_sids:
+                trip_ids.add(row[ti])
+    except ValueError:
+        return None
+
+    return frozenset(trip_ids)
 
 
 def _read_csv(zf: zipfile.ZipFile, filename: str):
@@ -99,6 +186,10 @@ def build_static_db(zip_bytes: bytes, target_path: str) -> StaticBuildMetrics:
             zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
             available = set(zf.namelist())
 
+            # Pre-compute active trip_ids for service-window pruning.
+            # None means "skip filter"; frozenset means "keep only these".
+            active_trip_ids = _compute_active_trip_ids(zf, available)
+
             for filename, table, required, cols in _TABLES:
                 if filename not in available:
                     if required:
@@ -107,9 +198,20 @@ def build_static_db(zip_bytes: bytes, target_path: str) -> StaticBuildMetrics:
 
                 t0 = time.monotonic()
                 rows_inserted = 0
-                db.execute(_ddl_for(table, cols))
+                integer_cols = (
+                    frozenset({"departure_time"}) if table == "stop_times" else frozenset()
+                )
+                db.execute(_ddl_for(table, cols, integer_cols))
                 placeholders = ",".join("?" * len(cols))
                 insert_sql = f'INSERT INTO "{table}" VALUES ({placeholders})'
+
+                # stop_times: column positions for filter + time conversion.
+                _st_trip_col = cols.index("trip_id") if table == "stop_times" else -1
+                _st_dep_col = (
+                    cols.index("departure_time")
+                    if table == "stop_times" and "departure_time" in cols
+                    else -1
+                )
 
                 with db:
                     batch: list[tuple] = []
@@ -127,6 +229,20 @@ def build_static_db(zip_bytes: bytes, target_path: str) -> StaticBuildMetrics:
                         values = tuple(
                             (row[i] if 0 <= i < len(row) else None) for i in col_index
                         )
+                        if table == "stop_times":
+                            # Drop rows outside the service window.
+                            if (
+                                active_trip_ids is not None
+                                and values[_st_trip_col] not in active_trip_ids
+                            ):
+                                continue
+                            # Convert departure_time to integer seconds.
+                            if _st_dep_col >= 0:
+                                vlist = list(values)
+                                vlist[_st_dep_col] = _gtfs_time_to_secs(
+                                    vlist[_st_dep_col]
+                                )
+                                values = tuple(vlist)
                         batch.append(values)
                         if len(batch) >= 5000:
                             db.executemany(insert_sql, batch)
