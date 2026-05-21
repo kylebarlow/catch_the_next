@@ -15,6 +15,17 @@ def load_config():
         "STATS_MAX_LOG_BYTES": int(os.environ.get("STATS_MAX_LOG_BYTES", "50000000")),
         "STATS_CACHE_SECONDS": int(os.environ.get("STATS_CACHE_SECONDS", "30")),
         "CACHE_DB_PATH": os.environ.get("CACHE_DB_PATH", "/home/protected/cache.sqlite"),
+        # Accept either name; the project root .env historically uses "511_API_KEY".
+        "FIVE_ELEVEN_API_KEY": (
+            os.environ.get("FIVE_ELEVEN_API_KEY")
+            or os.environ.get("511_API_KEY", "")
+        ),
+        "FIVE_ELEVEN_BASE_URL": os.environ.get("FIVE_ELEVEN_BASE_URL", "https://api.511.org/transit"),
+        "FIVE_ELEVEN_AGENCY": os.environ.get("FIVE_ELEVEN_AGENCY", "RG"),
+        "GTFS_511_DB_DIR": os.environ.get("GTFS_511_DB_DIR", "/home/protected/gtfs511"),
+        "FIVE_ELEVEN_RT_TTL": int(os.environ.get("FIVE_ELEVEN_RT_TTL", "60")),
+        "FIVE_ELEVEN_STATIC_TTL": int(os.environ.get("FIVE_ELEVEN_STATIC_TTL", str(86400 * 7))),
+        "FIVE_ELEVEN_ENABLED": os.environ.get("FIVE_ELEVEN_ENABLED", "1") not in ("0", "false", "False", ""),
     }
 
     missing = []

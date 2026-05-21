@@ -13,6 +13,13 @@ import bottle
 import cache
 from config import load_config
 
+try:
+    import gtfs511  # noqa: F401  — optional, may be disabled by config
+    _GTFS511_IMPORTED = True
+except Exception as _e:
+    print(f"gtfs511 import failed; 511 path disabled: {_e}", file=sys.stderr)
+    _GTFS511_IMPORTED = False
+
 __version__ = "1.0"
 
 _cfg = load_config()
@@ -367,17 +374,33 @@ def _resolve_stop_id(oid: str):
 
     Returns None if Transitland doesn't know the onestop_id.
     """
-    cache_key = f"oid:{oid}"
+    info = _resolve_stop_info(oid)
+    return info["integer_id"] if info else None
+
+
+def _resolve_stop_info(oid: str):
+    """Return ``{integer_id, feed_onestop_id, stop_id}`` for *oid* or None.
+
+    Cached for _STOP_ID_CACHE_TTL. The richer record (vs. just the integer)
+    lets us route Bay Area stops to the 511 path without an extra upstream
+    hit. Backwards-compatible with prior cache rows that stored only the int.
+    """
+    cache_key = f"oid_full:{oid}"
     cached = cache.get(cache_key)
-    if cached is not None:
+    if isinstance(cached, dict) and "integer_id" in cached:
         return cached
 
     data = _upstream_get("stops", {"onestop_id": oid, "limit": 1})
     for s in (data or {}).get("stops", []):
         if s.get("onestop_id") == oid and s.get("id"):
-            integer_id = s["id"]
-            cache.set(cache_key, integer_id, _STOP_ID_CACHE_TTL)
-            return integer_id
+            feed = (s.get("feed_version") or {}).get("feed") or {}
+            info = {
+                "integer_id": s["id"],
+                "feed_onestop_id": feed.get("onestop_id"),
+                "stop_id": s.get("stop_id"),
+            }
+            cache.set(cache_key, info, _STOP_ID_CACHE_TTL)
+            return info
     return None
 
 
@@ -388,11 +411,35 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
     if cached is not None:
         return cached
 
+    # Resolve all stops first so we can decide routing (511 vs Transitland)
+    # per stop. Resolution is cheap because it's cached for 30 days.
+    infos = {oid: _resolve_stop_info(oid) for oid in onestop_ids}
+
     def _fetch_one(oid: str):
-        integer_id = _resolve_stop_id(oid)
-        if integer_id is None:
+        info = infos.get(oid)
+        if info is None:
             return {"onestop_id": oid, "departures": [], "alerts": []}
 
+        # 511 path for Bay Area stops we recognize.
+        if _GTFS511_IMPORTED and gtfs511.is_bay_area_feed(info.get("feed_onestop_id")):
+            try:
+                gtfs511.refresh_if_stale()
+                feed_id = info["feed_onestop_id"]
+                raw_stop = info["stop_id"]
+                result = gtfs511.lookup_departures(
+                    [(feed_id, raw_stop)], next_seconds,
+                )
+                entry = result.get((feed_id, raw_stop)) or {}
+                return {
+                    "onestop_id": oid,
+                    "departures": entry.get("departures", []),
+                    "alerts": entry.get("alerts", []),
+                }
+            except Exception as e:
+                print(f"gtfs511 fallback for {oid}: {e}", file=sys.stderr)
+                # Fall through to Transitland.
+
+        integer_id = info["integer_id"]
         data = _upstream_get(
             f"stops/{integer_id}/departures",
             {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
@@ -400,10 +447,12 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
         )
         if data is None:
             # 404 means the integer_id is stale — evict and re-resolve once.
+            cache.delete(f"oid_full:{oid}")
             cache.delete(f"oid:{oid}")
-            integer_id = _resolve_stop_id(oid)
-            if integer_id is None:
+            refreshed = _resolve_stop_info(oid)
+            if refreshed is None:
                 return {"onestop_id": oid, "departures": [], "alerts": []}
+            integer_id = refreshed["integer_id"]
             data = _upstream_get(
                 f"stops/{integer_id}/departures",
                 {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},

@@ -1,8 +1,19 @@
 services:
   server:
     build: .
-    env_file: .env
+    # docker-compose's env_file silently drops keys that don't match shell
+    # naming conventions (so it strips `511_API_KEY`). wsgi.py re-reads the
+    # .env files from disk at startup, so we bind-mount the root .env into
+    # the container alongside the existing server/.env baked into the image.
+    env_file:
+      - .env
     ports:
       - "39217:80"
     environment:
       ACCESS_LOG_PATH: /var/log/apache2/access.log
+    volumes:
+      - protected:/home/protected
+      - ../.env:/.env:ro
+
+volumes:
+  protected:
