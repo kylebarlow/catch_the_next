@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from urllib.parse import parse_qs
+import counters
 from config import load_config
 
 _cfg = load_config()
@@ -292,6 +293,35 @@ def load_stats():
     now = datetime.now(tz=timezone.utc)
     windows, oldest, newest, daily = compute_stats(_parse_entries(data), now)
 
+    # Enrich windows with actual upstream call counts from the counter DB.
+    now_epoch = now.timestamp()
+    counter_windows = {
+        "hour": now_epoch - 3600,
+        "day":  now_epoch - 86400,
+        "week": now_epoch - 86400 * 7,
+        "all":  None,
+    }
+    for wname, since in counter_windows.items():
+        if since is not None:
+            five11   = counters.query_since("five11_calls",      since)
+            tl       = counters.query_since("transitland_calls", since)
+            nominatim = counters.query_since("nominatim_calls",  since)
+        else:
+            five11   = counters.query_all("five11_calls")
+            tl       = counters.query_all("transitland_calls")
+            nominatim = counters.query_all("nominatim_calls")
+        windows[wname]["five11_calls_actual"]      = five11
+        windows[wname]["transitland_calls_actual"] = tl
+        windows[wname]["nominatim_calls_actual"]   = nominatim
+
+    # Enrich daily rows with per-day 511 and Transitland counts.
+    daily_cutoff_epoch = (now - timedelta(days=14)).timestamp()
+    daily_five11 = counters.query_daily("five11_calls",      daily_cutoff_epoch)
+    daily_tl     = counters.query_daily("transitland_calls", daily_cutoff_epoch)
+    for row in daily:
+        row["five11"]      = daily_five11.get(row["date"], 0)
+        row["transitland_actual"] = daily_tl.get(row["date"], 0)
+
     result = {
         "windows":        windows,
         "daily":          daily,
@@ -325,6 +355,7 @@ td.ip{text-align:left;font-size:12px;color:#ccc}
 td.bar{text-align:left;padding:0 4px}
 .bar-fill{display:inline-block;height:10px;background:#3d7a3d;vertical-align:middle}
 .bar-fill.tl{background:#3d5f7a}
+.bar-fill.five11{background:#7a5f3d}
 tr:hover td{background:#1a1a1a}
 .sep{margin:32px 0 0;border:none;border-top:1px solid #333}
 .note{color:#888;margin:4px 0 12px;font-size:12px}
@@ -375,17 +406,44 @@ def render_html(stats: dict) -> str:
     parts.append("<h2>Summary</h2>")
     parts.append("<table>")
     parts.append(_th_row([""] + wlabels))
-    rows = [
+    inbound_rows = [
         ("Inbound requests", "inbound_total"),
         ("  ↳ from app",     "app_inbound"),
         ("Unique IPs",       "unique_ips"),
-        ("Transitland calls","transitland_calls"),
-        ("  ↳ from app",     "app_transitland_calls"),
-        ("Nominatim calls",  "nominatim_calls"),
         ("Errors (5xx)",     "error_count"),
     ]
-    for label, key in rows:
+    for label, key in inbound_rows:
         parts.append(_td_row(label, [w[n][key] for n in wnames]))
+    parts.append("</table>")
+
+    parts.append("<h2>Upstream API calls (tracked)</h2>")
+    parts.append(
+        '<div class="note">Actual calls recorded at call-time. '
+        'Counters began accumulating after the 511 pipeline was deployed — '
+        'zeros indicate no data yet for that window.</div>'
+    )
+    parts.append("<table>")
+    parts.append(_th_row([""] + wlabels))
+    upstream_rows = [
+        ("511.org (direct GTFS-RT)", "five11_calls_actual"),
+        ("Transitland API",          "transitland_calls_actual"),
+        ("Nominatim (geocode)",      "nominatim_calls_actual"),
+    ]
+    for label, key in upstream_rows:
+        parts.append(_td_row(label, [w[n][key] for n in wnames]))
+    # Show ratio if there's any data
+    ratio_cells = []
+    for n in wnames:
+        five11 = w[n]["five11_calls_actual"]
+        tl = w[n]["transitland_calls_actual"]
+        total = five11 + tl
+        if total:
+            pct = int(100 * five11 / total)
+            ratio_cells.append(f"{pct}% 511")
+        else:
+            ratio_cells.append("—")
+    parts.append("<tr><td class='lbl'>  ↳ 511 share of departures</td>" +
+                 "".join(f"<td>{r}</td>" for r in ratio_cells) + "</tr>")
     parts.append("</table>")
 
     # ── Cache-savings (duplicate requests within the proxy's response TTL) ──
@@ -413,23 +471,32 @@ def render_html(stats: dict) -> str:
     daily = stats.get("daily") or []
     if daily:
         max_inb = max((d["inbound"] for d in daily), default=0) or 1
-        max_tl = max((d["transitland"] for d in daily), default=0) or 1
+        max_511 = max((d.get("five11", 0) for d in daily), default=0)
+        max_tl  = max((d.get("transitland_actual", 0) for d in daily), default=0)
+        max_upstream = max(max_511, max_tl) or 1
         parts.append("<h2>Daily timeline (last 14 days)</h2>")
         parts.append(
-            '<div class="note">Excludes <code>/_internal</code>, '
-            '<code>/healthz</code>, and unknown paths.</div>'
+            '<div class="note">Inbound/App counts from access log; '
+            '511 and Transitland counts from tracked call counters '
+            '(zeros before counter deployment). '
+            'Excludes <code>/_internal</code>, <code>/healthz</code>.</div>'
         )
         parts.append("<table>")
-        parts.append(_th_row(["Date", "Inbound", "", "App", "TL calls", ""]))
+        parts.append(_th_row(["Date", "Inbound", "", "App", "511", "", "Transitland", ""]))
         for d in daily:
             inb_bar = int(120 * d["inbound"] / max_inb)
-            tl_bar = int(120 * d["transitland"] / max_tl)
+            five11_val = d.get("five11", 0)
+            tl_val = d.get("transitland_actual", 0)
+            five11_bar = int(120 * five11_val / max_upstream)
+            tl_bar = int(120 * tl_val / max_upstream)
             parts.append(
                 f"<tr><td class='lbl'>{d['date']}</td>"
                 f"<td>{_fmt(d['inbound'])}</td>"
                 f"<td class='bar'><span class='bar-fill' style='width:{inb_bar}px'></span></td>"
                 f"<td>{_fmt(d['app'])}</td>"
-                f"<td>{_fmt(d['transitland'])}</td>"
+                f"<td>{_fmt(five11_val)}</td>"
+                f"<td class='bar'><span class='bar-fill five11' style='width:{five11_bar}px'></span></td>"
+                f"<td>{_fmt(tl_val)}</td>"
                 f"<td class='bar'><span class='bar-fill tl' style='width:{tl_bar}px'></span></td></tr>"
             )
         parts.append("</table>")

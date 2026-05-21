@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import bottle
 import cache
+import counters
 from config import load_config
 
 try:
@@ -140,6 +141,7 @@ def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=Non
         headers=headers,
         timeout=(_connect_timeout, _read_timeout),
     )
+    counters.increment("nominatim_calls")
 
     places = []
     for item in data:
@@ -165,6 +167,7 @@ def get_stops(lat, lon, radius=500, limit=20):
         data = _upstream_get("stops", {
             "lat": lat, "lon": lon, "radius": radius, "limit": _UPSTREAM_STOPS_LIMIT,
         })
+        counters.increment("transitland_calls")
         cache.set(cache_key, data, _RESPONSE_CACHE_TTL)
 
     stops = []
@@ -364,6 +367,7 @@ def get_departures(stop_id, next_seconds=3600):
         f"stops/{stop_id}/departures",
         {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
     )
+    counters.increment("transitland_calls")
     result = {"departures": _shape_departures(data), "alerts": _shape_alerts(data)}
     cache.set(cache_key, result, _RESPONSE_CACHE_TTL)
     return result
@@ -391,6 +395,7 @@ def _resolve_stop_info(oid: str):
         return cached
 
     data = _upstream_get("stops", {"onestop_id": oid, "limit": 1})
+    counters.increment("transitland_calls")
     for s in (data or {}).get("stops", []):
         if s.get("onestop_id") == oid and s.get("id"):
             feed = (s.get("feed_version") or {}).get("feed") or {}
@@ -429,6 +434,7 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
                 result = gtfs511.lookup_departures(
                     [(feed_id, raw_stop)], next_seconds,
                 )
+                counters.increment("five11_calls")
                 entry = result.get((feed_id, raw_stop)) or {}
                 return {
                     "onestop_id": oid,
@@ -445,6 +451,7 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
             {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
             allow_404=True,
         )
+        counters.increment("transitland_calls")
         if data is None:
             # 404 means the integer_id is stale — evict and re-resolve once.
             cache.delete(f"oid_full:{oid}")
@@ -457,6 +464,7 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
                 f"stops/{integer_id}/departures",
                 {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
             )
+            counters.increment("transitland_calls")
 
         return {
             "onestop_id": oid,
