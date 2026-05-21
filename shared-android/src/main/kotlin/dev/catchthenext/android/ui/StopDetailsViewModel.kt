@@ -6,6 +6,7 @@ import dev.catchthenext.api.StopDepartures
 import dev.catchthenext.model.Alert
 import dev.catchthenext.model.Departure
 import dev.catchthenext.model.Stop
+import dev.catchthenext.android.util.toNetworkMessage
 import dev.catchthenext.storage.FavoritesManager
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +43,7 @@ class StopDetailsViewModel(
                 val stopDeps = getDepartures(stopId)
                 val isFav = favoritesManager.isFavorite(stop.onestopId ?: "")
                 DetailsUi.Loaded(stop, stopDeps.departures, isFav, stopDeps.alerts)
-            }.getOrElse { DetailsUi.Error(it.message ?: "Error loading departures") }
+            }.getOrElse { DetailsUi.Error(it.toNetworkMessage()) }
         }
     }
 

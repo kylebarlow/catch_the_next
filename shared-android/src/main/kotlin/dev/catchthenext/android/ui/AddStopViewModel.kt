@@ -2,6 +2,7 @@ package dev.catchthenext.android.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.catchthenext.android.util.toNetworkMessage
 import dev.catchthenext.model.Stop
 import dev.catchthenext.storage.FavoritesManager
 import dev.catchthenext.android.location.CurrentLocationProvider
@@ -52,7 +53,7 @@ class AddStopViewModel(
         _ui.value = runCatching {
             val stops = getNearbyStops(latLon.lat, latLon.lon, radiusMeters)
             if (stops.isEmpty()) AddStopUi.Empty else AddStopUi.Loaded(stops)
-        }.getOrElse { AddStopUi.Error(it.message ?: "Network error") }
+        }.getOrElse { AddStopUi.Error(it.toNetworkMessage()) }
     }
 
     fun addStop(stop: Stop) {

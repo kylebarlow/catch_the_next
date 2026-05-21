@@ -6,6 +6,7 @@ import dev.catchthenext.model.Departure
 import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.Stop
 import dev.catchthenext.android.location.LatLon
+import dev.catchthenext.android.util.toNetworkMessage
 import dev.catchthenext.android.location.closestTo
 import dev.catchthenext.android.location.haversineMeters
 import dev.catchthenext.android.location.withinMeters
@@ -82,7 +83,7 @@ suspend fun updateNearbyStopsDepartures(
     val result = runCatching { fetchDeparturesBatch(selectedIds) }
 
     if (result.isFailure) {
-        val errMsg = result.exceptionOrNull()?.message ?: "Could not load departures"
+        val errMsg = result.exceptionOrNull()?.toNetworkMessage() ?: "Could not load departures"
         return TileState.NetworkError(errMsg)
     }
 

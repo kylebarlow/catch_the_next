@@ -3,6 +3,7 @@ package dev.catchthenext.android.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.catchthenext.android.location.LatLon
+import dev.catchthenext.android.util.toNetworkMessage
 import dev.catchthenext.model.Place
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -59,7 +60,7 @@ class PlaceSearchViewModel(
                                 if (places.isEmpty()) PlaceSearchUi.NoResults
                                 else PlaceSearchUi.Results(places)
                             },
-                            onFailure = { PlaceSearchUi.Error(it.message ?: "Search error") },
+                            onFailure = { PlaceSearchUi.Error(it.toNetworkMessage()) },
                         )
                     )
                 }
