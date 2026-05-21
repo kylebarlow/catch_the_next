@@ -4,7 +4,7 @@ Produces records in the **exact field set** returned by
 ``proxy._shape_departures`` (19 fields) so downstream serialization is
 agnostic about the source.
 
-Two passes are merged + deduped per (trip_id, stop_id, stop_sequence):
+Two passes are merged + deduped per trip_id:
 
     1. RT pass    -- joins rt_trip_stop_times to static trips/routes/stops/agency.
     2. SCHED pass -- resolves today's stop_times via calendar/calendar_dates
@@ -78,8 +78,7 @@ def lookup_departures(
     out.sort(key=_sort_key)
     # Strip the internal-only fields before returning.
     for r in out:
-        for k in ("_trip_id", "_stop_id", "_stop_seq"):
-            r.pop(k, None)
+        r.pop("_trip_id", None)
     return out
 
 
@@ -105,7 +104,7 @@ def _agency_timezone(static_db: sqlite3.Connection) -> str | None:
 
 def _build_record(
     *, route_short_name, headsign, scheduled_utc, predicted_utc, schedule_relationship,
-    agency_name, feed_metadata, now_utc, trip_id, stop_id, stop_seq,
+    agency_name, feed_metadata, now_utc, trip_id,
 ) -> dict:
     time_source = "LIVE" if predicted_utc and schedule_relationship != "SKIPPED" else "SCHEDULED"
     sched_local_iso = _to_iso_utc(scheduled_utc)
@@ -130,8 +129,6 @@ def _build_record(
         "license_spdx": feed_metadata.get("license_spdx"),
         "license_url": feed_metadata.get("license_url"),
         "_trip_id": trip_id,
-        "_stop_id": stop_id,
-        "_stop_seq": stop_seq,
     }
     return rec
 
@@ -170,8 +167,6 @@ def _rt_pass(rt_db, static_db, stop_ids, now_utc, end_utc, feed_metadata):
             feed_metadata=feed_metadata,
             now_utc=now_utc,
             trip_id=r["trip_id"],
-            stop_id=r["stop_id"],
-            stop_seq=r["stop_sequence"],
         )
 
 
@@ -249,8 +244,6 @@ def _sched_pass(static_db, stop_ids, now_utc, end_utc, tz_str, feed_metadata):
                 feed_metadata=feed_metadata,
                 now_utc=now_utc,
                 trip_id=r["trip_id"],
-                stop_id=r["stop_id"],
-                stop_seq=r["stop_sequence"],
             )
 
 
@@ -319,11 +312,10 @@ def _sort_key(rec: dict) -> int:
     return rec["scheduled_departure_minutes"] if rec["scheduled_departure_minutes"] is not None else 0
 
 
-def _dedup_key(rec: dict) -> tuple:
-    """Stable key across RT (int) and static (text) stop_sequence columns."""
-    seq = rec.get("_stop_seq")
-    try:
-        seq_norm = int(seq) if seq is not None else None
-    except (TypeError, ValueError):
-        seq_norm = str(seq)
-    return (rec.get("_trip_id"), rec.get("_stop_id"), seq_norm)
+def _dedup_key(rec: dict) -> str | None:
+    # RT and static stop_times can disagree on stop_id (parent vs child
+    # platform) and stop_sequence (NULL in many 511 RT feeds). trip_id is the
+    # canonical join key per the GTFS-RT spec for SCHEDULED trips; the lookup
+    # is already scoped to a single parent-station group so trip_id uniquely
+    # identifies a trip's visit to that station on non-loop routes.
+    return rec.get("_trip_id")
