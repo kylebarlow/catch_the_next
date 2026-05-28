@@ -300,8 +300,9 @@ def build_static_db(zip_bytes: bytes, target_path: str) -> StaticBuildMetrics:
 
 def open_static_db(path: str) -> sqlite3.Connection:
     """Open the static DB for read-only queries."""
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
     db.row_factory = sqlite3.Row
+    db.execute("PRAGMA busy_timeout = 5000")
     return db
 
 

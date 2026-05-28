@@ -26,7 +26,7 @@ _load_env('/home/protected/server/.env')
 from gtfs511 import api  # noqa: E402  (env must load first)
 
 t0 = time.monotonic()
-m = api.refresh_static()
+m = api.refresh_static_locked()
 elapsed = time.monotonic() - t0
 print(
     f"refresh_static ok: {m.final_static_db_bytes} bytes, "

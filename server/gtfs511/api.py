@@ -12,7 +12,11 @@ Refresh policy:
     waiters get the freshly-written snapshot.
 
   * Lock: SQLite-backed (single-table mutex) so it works across CGI processes
-    that don't share memory.
+    that don't share memory. Upstream HTTP downloads happen OUTSIDE the lock so
+    a slow 511 API doesn't stall concurrent readers. Only the DB build step
+    (which is fast, especially with atomic temp-swap) runs under the lock.
+    All writers — CGI via refresh_if_stale and cron via refresh_static_locked —
+    must go through the lock.
 """
 
 import os
@@ -78,8 +82,11 @@ def is_bay_area_feed(feed_onestop_id: str | None) -> bool:
 
 
 def refresh_if_stale(metrics: RefreshMetrics | None = None) -> RefreshOutcome:
-    """Refresh the RT cache (and static, if missing/expired). Holds a file
-    lock so a concurrent caller waits rather than double-fetching."""
+    """Refresh the RT cache (and static, if missing/expired).
+
+    Downloads happen outside the cross-process lock so a slow 511 API does not
+    stall concurrent readers. The lock is held only around the fast DB build.
+    """
     metrics = metrics or RefreshMetrics()
     os.makedirs(_DB_DIR, exist_ok=True)
 
@@ -95,23 +102,27 @@ def refresh_if_stale(metrics: RefreshMetrics | None = None) -> RefreshOutcome:
         metrics.final_rt_db_bytes = _size(RT_DB_PATH)
         return RefreshOutcome(False, False, rt_age, static_age, metrics)
 
+    # Download outside the lock — errors propagate to the caller.
+    zip_bytes = _download_static_data(metrics) if static_stale else None
+    tu_bytes, alerts_bytes = _download_rt_data(metrics) if rt_stale else (None, None)
+
     refreshed_static = False
     refreshed_rt = False
     wait_start = time.monotonic()
     with _refresh_lock():
         metrics.waited_for_lock_seconds = time.monotonic() - wait_start
-        # Re-check under lock — a sibling may have just refreshed.
+        # Re-check under lock — a sibling may have just refreshed while we downloaded.
         static_age = _age(static_db.static_refreshed_at(STATIC_DB_PATH))
         rt_age = _age(rt_db.rt_refreshed_at(RT_DB_PATH))
         static_stale = static_age is None or static_age >= _STATIC_TTL
         rt_stale = rt_age is None or rt_age >= _RT_TTL
 
-        if static_stale:
-            refresh_static(metrics)
+        if static_stale and zip_bytes is not None:
+            _build_static(zip_bytes, metrics)
             refreshed_static = True
             static_age = 0
-        if rt_stale:
-            _refresh_rt(metrics)
+        if rt_stale and tu_bytes is not None:
+            _build_rt(tu_bytes, alerts_bytes, metrics)
             refreshed_rt = True
             rt_age = 0
 
@@ -121,21 +132,49 @@ def refresh_if_stale(metrics: RefreshMetrics | None = None) -> RefreshOutcome:
 
 
 def refresh_static(metrics: RefreshMetrics | None = None) -> RefreshMetrics:
-    """Force a static GTFS rebuild. Returns the metrics for inspection."""
+    """Force a static GTFS rebuild without holding the cross-process lock.
+
+    Prefer refresh_static_locked for cron/script use so concurrent CGI builds
+    are serialized.
+    """
     metrics = metrics or RefreshMetrics()
     os.makedirs(_DB_DIR, exist_ok=True)
+    zip_bytes = _download_static_data(metrics)
+    _build_static(zip_bytes, metrics)
+    return metrics
+
+
+def refresh_static_locked(metrics: RefreshMetrics | None = None) -> RefreshMetrics:
+    """Force a static GTFS rebuild, holding the cross-process lock around the build.
+
+    Intended for cron/script callers. Downloads outside the lock; only the
+    expensive DB build step is serialized so concurrent CGI processes are not
+    blocked during the download.
+    """
+    metrics = metrics or RefreshMetrics()
+    os.makedirs(_DB_DIR, exist_ok=True)
+    zip_bytes = _download_static_data(metrics)
+    with _refresh_lock():
+        _build_static(zip_bytes, metrics)
+    return metrics
+
+
+def _download_static_data(metrics: RefreshMetrics) -> bytes:
     res = download.download_static_zip()
     metrics.static_download_bytes = res.size
     metrics.static_download_seconds = res.elapsed_s
-    build = static_db.build_static_db(res.bytes_, STATIC_DB_PATH)
+    return res.bytes_
+
+
+def _build_static(zip_bytes: bytes, metrics: RefreshMetrics) -> None:
+    build = static_db.build_static_db(zip_bytes, STATIC_DB_PATH)
     metrics.static_rows = dict(build.rows_per_table)
     metrics.static_parse_seconds = dict(build.parse_seconds_per_table)
     metrics.static_write_seconds = build.write_seconds_total
     metrics.final_static_db_bytes = build.final_db_bytes
-    return metrics
 
 
-def _refresh_rt(metrics: RefreshMetrics) -> None:
+def _download_rt_data(metrics: RefreshMetrics) -> tuple[bytes, bytes | None]:
     tu = download.download_tripupdates()
     metrics.rt_download_bytes = tu.size
     metrics.rt_download_seconds = tu.elapsed_s
@@ -146,7 +185,11 @@ def _refresh_rt(metrics: RefreshMetrics) -> None:
         alerts_bytes = al.bytes_
     except download.FiveElevenError:
         alerts_bytes = None
-    build = rt_db.build_rt_db(tu.bytes_, alerts_bytes, RT_DB_PATH)
+    return tu.bytes_, alerts_bytes
+
+
+def _build_rt(tu_bytes: bytes, alerts_bytes: bytes | None, metrics: RefreshMetrics) -> None:
+    build = rt_db.build_rt_db(tu_bytes, alerts_bytes, RT_DB_PATH)
     metrics.rt_parse_seconds = build.parse_seconds
     metrics.rt_write_seconds = build.write_seconds
     metrics.rt_rows = build.rt_rows

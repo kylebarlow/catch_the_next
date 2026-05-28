@@ -8,6 +8,7 @@ new one (never a half-written mix).
 
 import os
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass
 
@@ -60,15 +61,6 @@ CREATE INDEX idx_alert_id ON rt_alerts (alert_id);
 CREATE TABLE rt_meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
-
-def _open_for_write(path: str) -> sqlite3.Connection:
-    parent_dir = os.path.dirname(path) or "."
-    os.makedirs(parent_dir, exist_ok=True)
-    db = sqlite3.connect(path)
-    # WAL so a reader (proxy request) can run while we rewrite.
-    db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA synchronous=NORMAL")
-    return db
 
 
 def build_rt_db(
@@ -168,39 +160,47 @@ def build_rt_db(
     metrics.parse_seconds = time.monotonic() - parse_start
 
     write_start = time.monotonic()
-    db = _open_for_write(target_path)
+    parent_dir = os.path.dirname(target_path) or "."
+    os.makedirs(parent_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".gtfs_rt.", dir=parent_dir)
+    os.close(fd)
+    os.unlink(tmp_path)
     try:
-        with db:
-            # Drop & recreate. DROP IF EXISTS is safer than a separate
-            # check — sqlite is fine with this in WAL mode.
-            db.execute("DROP TABLE IF EXISTS rt_trip_stop_times")
-            db.execute("DROP TABLE IF EXISTS rt_alerts")
-            db.execute("DROP TABLE IF EXISTS rt_meta")
-            db.execute("DROP INDEX IF EXISTS idx_rt_stop")
-            db.execute("DROP INDEX IF EXISTS idx_rt_trip")
-            db.execute("DROP INDEX IF EXISTS idx_alert_id")
-            for stmt in _DDL_RT.strip().split(";"):
-                s = stmt.strip()
-                if s:
-                    db.execute(s)
-            db.executemany(
-                "INSERT INTO rt_trip_stop_times VALUES (?,?,?,?,?,?,?,?,?,?)",
-                rt_rows,
-            )
-            db.executemany(
-                "INSERT INTO rt_alerts VALUES (?,?,?,?,?,?,?,?,?,?)",
-                alert_rows,
-            )
-            db.executemany(
-                "INSERT INTO rt_meta VALUES (?, ?)",
-                [
-                    ("refreshed_at", str(fetched_at)),
-                    ("rt_rows", str(len(rt_rows))),
-                    ("alert_rows", str(len(alert_rows))),
-                ],
-            )
-    finally:
-        db.close()
+        db = sqlite3.connect(tmp_path)
+        try:
+            db.execute("PRAGMA journal_mode=OFF")
+            db.execute("PRAGMA synchronous=OFF")
+            db.execute("PRAGMA temp_store=MEMORY")
+            with db:
+                for stmt in _DDL_RT.strip().split(";"):
+                    s = stmt.strip()
+                    if s:
+                        db.execute(s)
+                db.executemany(
+                    "INSERT INTO rt_trip_stop_times VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    rt_rows,
+                )
+                db.executemany(
+                    "INSERT INTO rt_alerts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    alert_rows,
+                )
+                db.executemany(
+                    "INSERT INTO rt_meta VALUES (?, ?)",
+                    [
+                        ("refreshed_at", str(fetched_at)),
+                        ("rt_rows", str(len(rt_rows))),
+                        ("alert_rows", str(len(alert_rows))),
+                    ],
+                )
+        finally:
+            db.close()
+        os.replace(tmp_path, target_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
     metrics.write_seconds = time.monotonic() - write_start
     metrics.rt_rows = len(rt_rows)
@@ -211,8 +211,9 @@ def build_rt_db(
 
 
 def open_rt_db(path: str) -> sqlite3.Connection:
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
     db.row_factory = sqlite3.Row
+    db.execute("PRAGMA busy_timeout = 5000")
     return db
 
 

@@ -1,6 +1,9 @@
 """GTFS-Realtime parsing + indexing tests."""
+import glob
 import os
+import sqlite3
 import time
+from unittest.mock import patch
 
 from gtfs511 import rt_db
 from tests.gtfs511_fixtures import make_tripupdates_pb, make_servicealerts_pb
@@ -81,3 +84,65 @@ def test_rt_refreshed_at_present_after_build(tmp_path):
 
 def test_rt_refreshed_at_missing_file(tmp_path):
     assert rt_db.rt_refreshed_at(str(tmp_path / "absent.sqlite")) is None
+
+
+def test_build_rt_db_atomic_swap(tmp_path):
+    """build_rt_db must write to a temp file then os.replace — no partial writes visible."""
+    target = str(tmp_path / "rt.sqlite")
+    pb = make_tripupdates_pb(predicted_epoch=int(time.time()) + 300)
+    replaced = []
+
+    original_replace = os.replace
+    def recording_replace(src, dst):
+        replaced.append((src, dst))
+        original_replace(src, dst)
+
+    with patch("gtfs511.rt_db.os.replace", side_effect=recording_replace):
+        rt_db.build_rt_db(pb, None, target)
+
+    assert len(replaced) == 1, "os.replace must be called exactly once"
+    assert replaced[0][1] == target
+    assert not glob.glob(str(tmp_path / ".gtfs_rt.*")), "temp file must be cleaned up after replace"
+
+
+def test_build_rt_db_temp_cleanup_on_exception(tmp_path):
+    """On failure the temp file is removed and the existing target is untouched."""
+    target = str(tmp_path / "rt.sqlite")
+    pb1 = make_tripupdates_pb(predicted_epoch=int(time.time()) + 60, trip_id="T1")
+    rt_db.build_rt_db(pb1, None, target)
+    original_mtime = os.path.getmtime(target)
+
+    pb2 = make_tripupdates_pb(predicted_epoch=int(time.time()) + 120, trip_id="T2")
+    # Inject failure at os.replace (after the DB is fully written to the temp file).
+    with patch("gtfs511.rt_db.os.replace", side_effect=OSError("injected")):
+        try:
+            rt_db.build_rt_db(pb2, None, target)
+        except OSError:
+            pass
+
+    assert not glob.glob(str(tmp_path / ".gtfs_rt.*")), "temp file must be cleaned up on failure"
+    assert os.path.getmtime(target) == original_mtime, "existing target must be untouched on failure"
+
+
+def test_no_wal_sidecar_files(tmp_path):
+    """build_rt_db must not leave -shm or -wal files next to the target."""
+    target = str(tmp_path / "rt.sqlite")
+    pb = make_tripupdates_pb(predicted_epoch=int(time.time()) + 300)
+    rt_db.build_rt_db(pb, None, target)
+
+    assert not os.path.exists(target + "-shm"), "-shm sidecar must not exist"
+    assert not os.path.exists(target + "-wal"), "-wal sidecar must not exist"
+
+
+def test_open_rt_db_busy_timeout(tmp_path):
+    """open_rt_db must set busy_timeout = 5000 ms."""
+    target = str(tmp_path / "rt.sqlite")
+    pb = make_tripupdates_pb(predicted_epoch=int(time.time()) + 300)
+    rt_db.build_rt_db(pb, None, target)
+
+    db = rt_db.open_rt_db(target)
+    try:
+        row = db.execute("PRAGMA busy_timeout").fetchone()
+        assert row[0] == 5000
+    finally:
+        db.close()
