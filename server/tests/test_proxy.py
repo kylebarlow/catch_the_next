@@ -294,6 +294,94 @@ def test_get_stops_radius_capped_at_5000():
     assert int(stops_call["params"]["radius"]) <= 5000
 
 
+# ── get_stops local 511 path + grid cache ───────────────────────────────────
+
+_LOCAL_ROWS = [
+    {"stop_id": "CHILD1", "stop_name": "Platform 1", "stop_lat": 37.7705,
+     "stop_lon": -122.4205, "parent_station": "PARENT", "location_type": "0"},
+    {"stop_id": "BAD,ID", "stop_name": "Comma Stop", "stop_lat": 37.7706,
+     "stop_lon": -122.4206, "parent_station": "", "location_type": "0"},
+]
+
+
+def test_get_stops_local_bay_area_path(monkeypatch):
+    monkeypatch.setattr(proxy.gtfs511, "in_bay_area", lambda lat, lon: True)
+    monkeypatch.setattr(proxy.gtfs511, "nearby_stops", lambda lat, lon, r, lim: _LOCAL_ROWS)
+    # _http_get_json must never be called on the local path.
+    with patch("proxy._http_get_json", side_effect=AssertionError("no upstream")):
+        result = proxy.get_stops(37.77, -122.42)
+
+    # The comma stop_id is skipped (can't be a synthetic id).
+    assert len(result["stops"]) == 1
+    s = result["stops"][0]
+    assert set(s.keys()) == {
+        "id", "stop_id", "stop_name", "lat", "lon", "onestop_id",
+        "feed_onestop_id", "feed_name", "attribution_text",
+        "attribution_instructions", "use_without_attribution",
+        "license_spdx", "license_url",
+    }
+    assert s["onestop_id"] == "511:f-sf~bay~area~rg:CHILD1"
+    assert s["id"] < 0  # negative stable synthetic id
+    assert s["feed_onestop_id"] == "f-sf~bay~area~rg"
+    assert "511" in (s["attribution_text"] or "")
+
+
+def test_get_stops_local_none_falls_through_to_tl(monkeypatch):
+    monkeypatch.setattr(proxy.gtfs511, "in_bay_area", lambda lat, lon: True)
+    monkeypatch.setattr(proxy.gtfs511, "nearby_stops", lambda lat, lon, r, lim: None)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE))):
+        result = proxy.get_stops(37.77, -122.42, radius=5000)
+    assert result["stops"][0]["onestop_id"] == "s-test"
+
+
+def test_get_stops_outside_bbox_uses_tl(monkeypatch):
+    monkeypatch.setattr(proxy.gtfs511, "in_bay_area", lambda lat, lon: False)
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE))):
+        result = proxy.get_stops(37.8, -122.4)
+    assert result["stops"][0]["onestop_id"] == "s-test"
+
+
+def test_get_stops_grid_same_cell_one_upstream_call(monkeypatch):
+    monkeypatch.setattr(proxy.gtfs511, "in_bay_area", lambda lat, lon: False)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE), capture=calls)):
+        proxy.get_stops(37.7700, -122.4200, radius=200)
+        proxy.get_stops(37.7701, -122.4201, radius=200)  # same grid cell
+    stops_calls = [c for c in calls if "stops" in c["url"] and "departures" not in c["url"]]
+    assert len(stops_calls) == 1
+
+
+def test_get_stops_grid_adjacent_cells_two_calls(monkeypatch):
+    monkeypatch.setattr(proxy.gtfs511, "in_bay_area", lambda lat, lon: False)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE), capture=calls)):
+        proxy.get_stops(37.7700, -122.4200, radius=200)
+        proxy.get_stops(37.7800, -122.4200, radius=200)  # different cell
+    stops_calls = [c for c in calls if "stops" in c["url"] and "departures" not in c["url"]]
+    assert len(stops_calls) == 2
+
+
+def test_get_stops_grid_upstream_radius_includes_slack(monkeypatch):
+    monkeypatch.setattr(proxy.gtfs511, "in_bay_area", lambda lat, lon: False)
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", STOPS_RESPONSE), capture=calls)):
+        proxy.get_stops(37.77, -122.42, radius=500)
+    stops_call = next(c for c in calls if "stops" in c["url"] and "departures" not in c["url"])
+    assert int(stops_call["params"]["radius"]) == 800  # 500 + 300 slack
+
+
+def test_get_stops_grid_filters_beyond_requested_radius(monkeypatch):
+    monkeypatch.setattr(proxy.gtfs511, "in_bay_area", lambda lat, lon: False)
+    # Upstream returns a far stop (within slack but beyond requested radius).
+    far = {"stops": [{
+        "id": 1, "stop_id": "FAR", "stop_name": "Far",
+        "geometry": {"coordinates": [-122.4, 37.78]},  # ~1.1km from 37.77
+    }]}
+    with patch("proxy._http_get_json", side_effect=_make_http_mock(("stops", far))):
+        result = proxy.get_stops(37.77, -122.42, radius=300)
+    assert result["stops"] == []  # filtered: beyond requested radius
+
+
 # ── get_departures ─────────────────────────────────────────────────────────────
 
 DEPARTURES_RESPONSE_NULL_FIELDS = {
@@ -554,7 +642,7 @@ def _batch_http(dep_responses_by_id=None, capture=None):
 
 
 def test_get_departures_by_onestop_ids_returns_grouped_results():
-    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE, 20: DEPARTURES_RESPONSE_WITH_AGENCY})):
+    with patch("proxy._http_get_json", side_effect=_batch_http({"s-test-10": DEPARTURES_RESPONSE, "s-test-20": DEPARTURES_RESPONSE_WITH_AGENCY})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
     assert "stops" in result
@@ -576,7 +664,7 @@ def test_get_departures_by_onestop_ids_preserves_request_order():
 
 
 def test_get_departures_by_onestop_ids_returns_empty_when_stop_not_resolved():
-    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE})):
+    with patch("proxy._http_get_json", side_effect=_batch_http({"s-test-10": DEPARTURES_RESPONSE})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-notfound"], next_seconds=3600)
 
     found = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
@@ -588,7 +676,7 @@ def test_get_departures_by_onestop_ids_returns_empty_when_stop_not_resolved():
 
 def test_get_departures_by_onestop_ids_returns_empty_departures_for_stop_with_none():
     response_no_deps = {"stops": [{"departures": None, "children": None}]}
-    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE, 20: response_no_deps})):
+    with patch("proxy._http_get_json", side_effect=_batch_http({"s-test-10": DEPARTURES_RESPONSE, "s-test-20": response_no_deps})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
     stop10 = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
@@ -610,7 +698,7 @@ def test_get_departures_by_onestop_ids_applies_next_to_departure_calls():
 def test_get_departures_by_onestop_ids_shaping_matches_single_stop():
     with patch("proxy._http_get_json", side_effect=_make_http_mock(("/departures", DEPARTURES_RESPONSE_WITH_AGENCY))):
         single = proxy.get_departures(42, next_seconds=3600)
-    with patch("proxy._http_get_json", side_effect=_batch_http({42: DEPARTURES_RESPONSE_WITH_AGENCY})):
+    with patch("proxy._http_get_json", side_effect=_batch_http({"s-test-42": DEPARTURES_RESPONSE_WITH_AGENCY})):
         batch = proxy.get_departures_by_onestop_ids(["s-test-42"], next_seconds=3600)
 
     assert single["departures"] == batch["stops"][0]["departures"]
@@ -627,7 +715,7 @@ def test_shape_departures_is_used_by_get_departures():
 
 def test_get_departures_by_onestop_ids_resolves_then_fetches():
     calls = []
-    with patch("proxy._http_get_json", side_effect=_batch_http({99: DEPARTURES_RESPONSE}, capture=calls)):
+    with patch("proxy._http_get_json", side_effect=_batch_http({"s-abc-mystation": DEPARTURES_RESPONSE}, capture=calls)):
         result = proxy.get_departures_by_onestop_ids(["s-abc-mystation"], next_seconds=3600)
 
     assert result["stops"][0]["onestop_id"] == "s-abc-mystation"
@@ -638,7 +726,7 @@ def test_get_departures_by_onestop_ids_resolves_then_fetches():
 
 def test_get_departures_by_onestop_ids_resolves_each_id_individually():
     calls = []
-    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE, 20: DEPARTURES_RESPONSE}, capture=calls)):
+    with patch("proxy._http_get_json", side_effect=_batch_http({"s-test-10": DEPARTURES_RESPONSE, "s-test-20": DEPARTURES_RESPONSE}, capture=calls)):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
     resolve_calls = [c for c in calls if "stops" in c["url"] and "/departures" not in c["url"]]
@@ -661,32 +749,18 @@ def test_get_departures_by_onestop_ids_sends_include_alerts():
     assert all(c["params"].get("include_alerts") == "true" for c in dep_calls)
 
 
-def test_stop_id_cache_evicted_on_404(monkeypatch):
-    """When a cached integer_id returns 404, the cache is evicted and the
-    stop is re-resolved before trying again."""
-    import cache as _cache
+def test_departures_url_uses_onestop_id_with_one_resolve_one_departures():
+    """The Transitland departures call is keyed by the onestop_id directly;
+    exactly one resolve + one departures call occur per stop."""
+    calls = []
+    with patch("proxy._http_get_json", side_effect=_batch_http(capture=calls)):
+        proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
 
-    # Seed a stale integer_id in cache.
-    _cache.set("oid:s-test-10", 999, ttl_seconds=60)
-
-    call_log = []
-
-    def side_effect(url, params=None, headers=None, timeout=None, allow_404=False):
-        call_log.append(url)
-        if "stops" in url and "/departures" not in url:
-            return RESOLVE_10  # re-resolve returns id=10
-        if "stops/999/departures" in url:
-            return None  # simulate 404 for stale id
-        if "stops/10/departures" in url:
-            return DEPARTURES_RESPONSE
-        return {"stops": []}
-
-    with patch("proxy._http_get_json", side_effect=side_effect):
-        result = proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
-
-    assert any("stops/999/departures" in u for u in call_log), "should try stale id first"
-    assert any("stops/10/departures" in u for u in call_log), "should retry with fresh id"
-    assert len(result["stops"][0]["departures"]) > 0
+    resolve_calls = [c for c in calls if "stops" in c["url"] and "/departures" not in c["url"]]
+    dep_calls = [c for c in calls if "/departures" in c["url"]]
+    assert len(resolve_calls) == 1
+    assert len(dep_calls) == 1
+    assert "stops/s-test-10/departures" in dep_calls[0]["url"]
 
 
 # ── Alert helpers ──────────────────────────────────────────────────────────────
@@ -826,7 +900,7 @@ def test_get_departures_falls_back_to_first_non_empty_translation():
 def test_get_departures_by_onestop_ids_includes_alerts_per_stop():
     alert = _active_alert("Service change")
     data_with_alert = _departures_with_alerts(alert)
-    with patch("proxy._http_get_json", side_effect=_batch_http({10: data_with_alert, 20: DEPARTURES_RESPONSE})):
+    with patch("proxy._http_get_json", side_effect=_batch_http({"s-test-10": data_with_alert, "s-test-20": DEPARTURES_RESPONSE})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10", "s-test-20"], next_seconds=3600)
 
     stop10 = next(s for s in result["stops"] if s["onestop_id"] == "s-test-10")
@@ -837,7 +911,7 @@ def test_get_departures_by_onestop_ids_includes_alerts_per_stop():
 
 
 def test_get_departures_by_onestop_ids_alerts_key_present_when_no_alerts():
-    with patch("proxy._http_get_json", side_effect=_batch_http({10: DEPARTURES_RESPONSE})):
+    with patch("proxy._http_get_json", side_effect=_batch_http({"s-test-10": DEPARTURES_RESPONSE})):
         result = proxy.get_departures_by_onestop_ids(["s-test-10"], next_seconds=3600)
     assert "alerts" in result["stops"][0]
     assert result["stops"][0]["alerts"] == []

@@ -27,6 +27,11 @@ def clear_cache_between_tests():
     yield
 
 
+# NOTE: tests that call proxy.get_stops at Bay Area coords WITHOUT the
+# gtfs511_dir fixture rely on this tmp default having no static DB — so
+# gtfs511.nearby_stops returns None and the call falls through to the
+# Transitland path. If a static DB ever lands here, those tests would switch to
+# the local path and break.
 @pytest.fixture
 def gtfs511_dir(tmp_path, monkeypatch):
     """Redirect gtfs511's on-disk paths to a per-test tmp directory."""

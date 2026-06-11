@@ -24,6 +24,7 @@ def load_config():
         "FIVE_ELEVEN_AGENCY": os.environ.get("FIVE_ELEVEN_AGENCY", "RG"),
         "GTFS_511_DB_DIR": os.environ.get("GTFS_511_DB_DIR", "/home/protected/gtfs511"),
         "FIVE_ELEVEN_RT_TTL": int(os.environ.get("FIVE_ELEVEN_RT_TTL", "60")),
+        "FIVE_ELEVEN_RT_MAX_STALE": int(os.environ.get("FIVE_ELEVEN_RT_MAX_STALE", "180")),
         "FIVE_ELEVEN_STATIC_TTL": int(os.environ.get("FIVE_ELEVEN_STATIC_TTL", str(86400 * 7))),
         "FIVE_ELEVEN_ENABLED": os.environ.get("FIVE_ELEVEN_ENABLED", "1") not in ("0", "false", "False", ""),
     }

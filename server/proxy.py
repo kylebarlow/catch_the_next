@@ -4,6 +4,7 @@ import socket
 import sys
 import threading
 import time
+import zlib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,6 +29,7 @@ _base_url = _cfg["TRANSITLAND_BASE_URL"]
 _api_key = _cfg["TRANSITLAND_API_KEY"]
 _connect_timeout = _cfg["UPSTREAM_CONNECT_TIMEOUT"]
 _read_timeout = _cfg["UPSTREAM_READ_TIMEOUT"]
+_RT_MAX_STALE = _cfg["FIVE_ELEVEN_RT_MAX_STALE"]
 
 _USER_AGENT = f"CatchTheNext-Proxy/{__version__} (+https://codeberg.org/ursidaureus/catch_the_next)"
 
@@ -39,11 +41,58 @@ _nominatim_last_call = 0.0
 _RESPONSE_CACHE_TTL = 50
 # Geocode results change rarely; 1h is safe.
 _GEOCODE_CACHE_TTL = 3600
-# onestop_id → integer_id mappings are stable across feed updates; only
-# invalidated on 404 from the downstream departures call.
-_STOP_ID_CACHE_TTL = 86400 * 30  # 30 days
+# _resolve_stop_info records only classify a stop as Bay-Area-or-not and supply
+# its feed/stop_id; the TL departures call is now keyed by onestop_id directly,
+# so integer-id staleness is irrelevant and the record can live a long time.
+_STOP_ID_CACHE_TTL = 86400 * 180  # 180 days
 
 _BATCH_MAX_STOPS = 6
+
+# ── Synthetic onestop_id helpers ────────────────────────────────────────────
+# Stops discovered via the local 511 static DB carry a server-synthesized
+# onestop_id "511:<feed_onestop_id>:<stop_id>". The Kotlin client treats it as
+# an opaque string, so it round-trips with zero client changes. They have no
+# Transitland identity — they always serve from the local 511 path.
+#
+# CAVEAT: disabling 511 after synthetic ids exist is a one-way door — those
+# favorites would go dark (empty departures) since they can't be served by TL.
+_SYNTHETIC_PREFIX = "511:"
+
+
+def _parse_synthetic_onestop_id(oid):
+    """Return (feed_id, stop_id) for a synthetic id, else None.
+
+    Requires 3 non-empty parts and a recognized Bay Area feed. ':' inside the
+    stop_id is preserved (split with maxsplit=2).
+    """
+    if not isinstance(oid, str) or not oid.startswith(_SYNTHETIC_PREFIX):
+        return None
+    parts = oid.split(":", 2)
+    if len(parts) != 3:
+        return None
+    _, feed_id, stop_id = parts
+    if not feed_id or not stop_id:
+        return None
+    if not (_GTFS511_IMPORTED and gtfs511.is_bay_area_feed(feed_id)):
+        return None
+    return feed_id, stop_id
+
+
+def _make_synthetic_onestop_id(feed_id, stop_id):
+    """Build a synthetic id, or None if stop_id is empty or contains ',' (the
+    client's batch separator)."""
+    if not stop_id or "," in str(stop_id):
+        return None
+    return f"{_SYNTHETIC_PREFIX}{feed_id}:{stop_id}"
+
+
+def _synthetic_integer_id(onestop_id: str) -> int:
+    """Stable negative integer id for a synthetic onestop_id.
+
+    crc32 (not hash(), which is salted per-process) keeps it stable across
+    processes; negative so it can't collide with Transitland's positive ids.
+    """
+    return -((zlib.crc32(onestop_id.encode()) % 0x7FFFFFFF) + 1)
 
 
 def _http_get_json(url: str, params: dict | None = None,
@@ -158,23 +207,80 @@ def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=Non
     return result
 
 
+# Grid-snapped caching for the Transitland get_stops path. We round the query
+# coords to a coarse grid cell and fetch the cell center + slack so nearby
+# requests share an upstream call.
+_STOPS_GRID_DEG = 0.002          # ~222m
+_STOPS_GRID_SLACK_M = 300
+_STOPS_GRID_CACHE_TTL = 6 * 3600
+
+
+def _shape_local_stop(row) -> dict | None:
+    """Shape a local 511 static-DB stop row into the 13-key stop dict, or None
+    if it can't be assigned a synthetic onestop_id."""
+    onestop_id = _make_synthetic_onestop_id(gtfs511.REGIONAL_FEED_ID, row["stop_id"])
+    if onestop_id is None:
+        return None
+    meta = gtfs511.metadata_for(gtfs511.REGIONAL_FEED_ID)
+    return {
+        "id": _synthetic_integer_id(onestop_id),
+        "stop_id": row["stop_id"],
+        "stop_name": row["stop_name"],
+        "lat": row["stop_lat"],
+        "lon": row["stop_lon"],
+        "onestop_id": onestop_id,
+        "feed_onestop_id": gtfs511.REGIONAL_FEED_ID,
+        "feed_name": meta.get("feed_name"),
+        "attribution_text": meta.get("attribution_text"),
+        "attribution_instructions": meta.get("attribution_instructions"),
+        "use_without_attribution": bool(meta.get("use_without_attribution")),
+        "license_spdx": meta.get("license_spdx"),
+        "license_url": meta.get("license_url"),
+    }
+
+
 def get_stops(lat, lon, radius=500, limit=20):
     radius = min(int(radius), 5000)
     limit = min(int(limit), 50)
-    cache_key = f"stops:{lat}:{lon}:{radius}"
+
+    # Local Bay Area path: serve from the 511 static DB with no Transitland
+    # call and no cache write (a local SQLite read needs no caching).
+    if _GTFS511_IMPORTED and gtfs511.in_bay_area(float(lat), float(lon)):
+        rows = gtfs511.nearby_stops(float(lat), float(lon), radius, limit)
+        if rows is not None:  # None => static missing/disabled => fall through to TL
+            stops = []
+            for row in rows:
+                shaped = _shape_local_stop(row)
+                if shaped is not None:
+                    stops.append(shaped)
+            return {"stops": stops}
+
+    # Transitland path with grid-snapped caching.
+    cell_lat = round(float(lat) / _STOPS_GRID_DEG)
+    cell_lon = round(float(lon) / _STOPS_GRID_DEG)
+    upstream_radius = min(radius + _STOPS_GRID_SLACK_M, 5000)
+    cache_key = f"stops_g:{cell_lat}:{cell_lon}:{radius}"
     data = cache.get(cache_key)
     if data is None:
         data = _upstream_get("stops", {
-            "lat": lat, "lon": lon, "radius": radius, "limit": _UPSTREAM_STOPS_LIMIT,
+            "lat": cell_lat * _STOPS_GRID_DEG,
+            "lon": cell_lon * _STOPS_GRID_DEG,
+            "radius": upstream_radius,
+            "limit": _UPSTREAM_STOPS_LIMIT,
         })
         counters.increment("transitland_calls")
-        cache.set(cache_key, data, _RESPONSE_CACHE_TTL)
+        cache.set(cache_key, data, _STOPS_GRID_CACHE_TTL)
 
     stops = []
     for s in data.get("stops", []):
         geom = s.get("geometry", {}).get("coordinates", [None, None])
         slat, slon = geom[1], geom[0]
         if slat is None or slon is None:
+            continue
+        # Haversine to the TRUE requested coords (not the grid center); post-
+        # filter so slack-radius results don't leak past the requested radius.
+        dist = _haversine_meters(lat, lon, slat, slon)
+        if dist > radius:
             continue
         feed_version = s.get("feed_version") or {}
         feed = feed_version.get("feed") or {}
@@ -194,13 +300,16 @@ def get_stops(lat, lon, radius=500, limit=20):
             "use_without_attribution": use_without in ("yes", True, "true"),
             "license_spdx": license_info.get("spdx_identifier"),
             "license_url": license_info.get("url"),
-            "_dist_m": _haversine_meters(lat, lon, slat, slon),
+            "_dist_m": dist,
         })
 
     stops.sort(key=lambda s: s["_dist_m"])
     stops = stops[:limit]
     for s in stops:
         del s["_dist_m"]
+    # NOTE: _UPSTREAM_STOPS_LIMIT=100 alphabetical truncation worsens slightly
+    # with slack; at radius=5000 the cap can miss boundary stops within ~141m
+    # of the edge.
     return {"stops": stops}
 
 
@@ -373,15 +482,6 @@ def get_departures(stop_id, next_seconds=3600):
     return result
 
 
-def _resolve_stop_id(oid: str):
-    """Return the integer stop ID for *oid*, using a long-lived SQLite cache.
-
-    Returns None if Transitland doesn't know the onestop_id.
-    """
-    info = _resolve_stop_info(oid)
-    return info["integer_id"] if info else None
-
-
 def _resolve_stop_info(oid: str):
     """Return ``{integer_id, feed_onestop_id, stop_id}`` for *oid* or None.
 
@@ -409,6 +509,56 @@ def _resolve_stop_info(oid: str):
     return None
 
 
+def _refresh_511_state() -> dict:
+    """Refresh the 511 caches once per request. Never raises.
+
+    Returns {"static_present": bool, "rt_fresh": bool, "rt_age": int|None}.
+    rt_fresh means the RT snapshot is no older than _RT_MAX_STALE.
+    """
+    if not _GTFS511_IMPORTED or not gtfs511.enabled():
+        return {"static_present": False, "rt_fresh": False, "rt_age": None}
+    try:
+        outcome = gtfs511.refresh_if_stale()
+        static_age = outcome.static_age_seconds
+        rt_age = outcome.rt_age_seconds
+    except Exception as e:  # noqa: BLE001 — refresh_if_stale shouldn't raise; safety net
+        print(f"gtfs511 refresh_if_stale raised: {e}", file=sys.stderr)
+        static_age, rt_age = gtfs511.data_ages()
+    return {
+        "static_present": static_age is not None,
+        "rt_fresh": rt_age is not None and rt_age <= _RT_MAX_STALE,
+        "rt_age": rt_age,
+    }
+
+
+def _tl_departures(oid: str, next_seconds: int) -> dict:
+    """Fetch departures for *oid* from Transitland, keyed by onestop_id."""
+    data = _upstream_get(
+        f"stops/{urllib.parse.quote(oid, safe='')}/departures",
+        {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
+        allow_404=True,
+    )
+    counters.increment("transitland_calls")
+    if data is None:  # 404 — treat as empty
+        return {"onestop_id": oid, "departures": [], "alerts": []}
+    return {
+        "onestop_id": oid,
+        "departures": _shape_departures(data),
+        "alerts": _shape_alerts(data),
+    }
+
+
+def _local_departures(oid: str, feed_id: str, stop_id: str, next_seconds: int) -> dict:
+    result = gtfs511.lookup_departures([(feed_id, stop_id)], next_seconds)
+    counters.increment("five11_calls")
+    entry = result.get((feed_id, stop_id)) or {}
+    return {
+        "onestop_id": oid,
+        "departures": entry.get("departures", []),
+        "alerts": entry.get("alerts", []),
+    }
+
+
 def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
     next_seconds = min(int(next_seconds), 86400)
     cache_key = f"departures:{','.join(sorted(onestop_ids))}:{next_seconds}"
@@ -416,61 +566,56 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
     if cached is not None:
         return cached
 
-    # Resolve all stops first so we can decide routing (511 vs Transitland)
-    # per stop. Resolution is cheap because it's cached for 30 days.
-    infos = {oid: _resolve_stop_info(oid) for oid in onestop_ids}
+    # Classification pass (sequential, before the pool): build one plan per oid.
+    #   ("local_always", feed_id, stop_id) — synthetic id, always served locally
+    #   ("local_or_tl", feed_id, stop_id)  — Bay Area TL stop, local if RT fresh
+    #   ("tl", oid)                        — non-Bay-Area, Transitland only
+    #   ("none", oid)                      — unresolvable, empty result
+    plans = {}
+    need_511 = False
+    for oid in onestop_ids:
+        syn = _parse_synthetic_onestop_id(oid)
+        if syn is not None:
+            plans[oid] = ("local_always", syn[0], syn[1])
+            need_511 = True
+            continue
+        info = _resolve_stop_info(oid)
+        if info is None:
+            plans[oid] = ("none", oid)
+        elif _GTFS511_IMPORTED and gtfs511.is_bay_area_feed(info.get("feed_onestop_id")):
+            plans[oid] = ("local_or_tl", info["feed_onestop_id"], info["stop_id"])
+            need_511 = True
+        else:
+            plans[oid] = ("tl", oid)
+
+    state = _refresh_511_state() if need_511 else None
 
     def _fetch_one(oid: str):
-        info = infos.get(oid)
-        if info is None:
+        plan = plans[oid]
+        kind = plan[0]
+        if kind == "none":
             return {"onestop_id": oid, "departures": [], "alerts": []}
-
-        # 511 path for Bay Area stops we recognize.
-        if _GTFS511_IMPORTED and gtfs511.is_bay_area_feed(info.get("feed_onestop_id")):
-            try:
-                gtfs511.refresh_if_stale()
-                feed_id = info["feed_onestop_id"]
-                raw_stop = info["stop_id"]
-                result = gtfs511.lookup_departures(
-                    [(feed_id, raw_stop)], next_seconds,
-                )
-                counters.increment("five11_calls")
-                entry = result.get((feed_id, raw_stop)) or {}
-                return {
-                    "onestop_id": oid,
-                    "departures": entry.get("departures", []),
-                    "alerts": entry.get("alerts", []),
-                }
-            except Exception as e:
-                print(f"gtfs511 fallback for {oid}: {e}", file=sys.stderr)
-                # Fall through to Transitland.
-
-        integer_id = info["integer_id"]
-        data = _upstream_get(
-            f"stops/{integer_id}/departures",
-            {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
-            allow_404=True,
-        )
-        counters.increment("transitland_calls")
-        if data is None:
-            # 404 means the integer_id is stale — evict and re-resolve once.
-            cache.delete(f"oid_full:{oid}")
-            cache.delete(f"oid:{oid}")
-            refreshed = _resolve_stop_info(oid)
-            if refreshed is None:
-                return {"onestop_id": oid, "departures": [], "alerts": []}
-            integer_id = refreshed["integer_id"]
-            data = _upstream_get(
-                f"stops/{integer_id}/departures",
-                {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
-            )
-            counters.increment("transitland_calls")
-
-        return {
-            "onestop_id": oid,
-            "departures": _shape_departures(data),
-            "alerts": _shape_alerts(data),
-        }
+        if kind == "local_always":
+            _, feed_id, stop_id = plan
+            # Synthetic ids have no TL identity — serve locally regardless of RT
+            # staleness (schedule data degrades gracefully). Never call TL.
+            if state and state["static_present"]:
+                try:
+                    return _local_departures(oid, feed_id, stop_id, next_seconds)
+                except Exception as e:  # noqa: BLE001
+                    print(f"gtfs511 local_always lookup for {oid}: {e}", file=sys.stderr)
+            return {"onestop_id": oid, "departures": [], "alerts": []}
+        if kind == "local_or_tl":
+            _, feed_id, stop_id = plan
+            if state and state["static_present"] and state["rt_fresh"]:
+                try:
+                    return _local_departures(oid, feed_id, stop_id, next_seconds)
+                except Exception as e:  # noqa: BLE001
+                    print(f"gtfs511 fallback for {oid}: {e}", file=sys.stderr)
+            # RT missing / stale / static missing / lookup failed → Transitland.
+            return _tl_departures(oid, next_seconds)
+        # kind == "tl"
+        return _tl_departures(oid, next_seconds)
 
     with ThreadPoolExecutor(max_workers=max(len(onestop_ids), 1)) as pool:
         stops = list(pool.map(_fetch_one, onestop_ids))

@@ -17,10 +17,18 @@ Refresh policy:
     (which is fast, especially with atomic temp-swap) runs under the lock.
     All writers — CGI via refresh_if_stale and cron via refresh_static_locked —
     must go through the lock.
+
+Error handling split: `refresh_if_stale` is **non-fatal** for upstream
+problems — a failed download or build is logged, recorded in the outcome's
+``rt_error`` / ``static_error`` fields, and the old DB (if any) is left intact.
+It never raises for upstream issues so a 511 outage can't take down a request.
+`refresh_static` / `refresh_static_locked` keep raising so cron sees loud
+failures.
 """
 
 import os
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Iterable
@@ -68,6 +76,8 @@ class RefreshOutcome:
     rt_age_seconds: int | None
     static_age_seconds: int | None
     metrics: RefreshMetrics
+    rt_error: str | None = None
+    static_error: str | None = None
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -79,6 +89,52 @@ def enabled() -> bool:
 
 def is_bay_area_feed(feed_onestop_id: str | None) -> bool:
     return enabled() and feed_mapping.is_bay_area_feed(feed_onestop_id)
+
+
+def in_bay_area(lat: float, lon: float) -> bool:
+    return enabled() and feed_mapping.in_bay_area(lat, lon)
+
+
+def metadata_for(feed_onestop_id: str) -> dict:
+    return feed_mapping.metadata_for(feed_onestop_id)
+
+
+REGIONAL_FEED_ID = feed_mapping.REGIONAL_FEED_ID
+
+
+def data_ages() -> tuple[int | None, int | None]:
+    """Return (static_age, rt_age) read from disk; never raises.
+
+    Safety net for callers that need ages after an unexpected refresh error.
+    """
+    try:
+        static_age = _age(static_db.static_refreshed_at(STATIC_DB_PATH))
+    except Exception:  # noqa: BLE001
+        static_age = None
+    try:
+        rt_age = _age(rt_db.rt_refreshed_at(RT_DB_PATH))
+    except Exception:  # noqa: BLE001
+        rt_age = None
+    return static_age, rt_age
+
+
+def static_db_available() -> bool:
+    return enabled() and os.path.isfile(STATIC_DB_PATH)
+
+
+def nearby_stops(lat: float, lon: float, radius_m: float, limit: int) -> list[dict] | None:
+    """Return nearby stops from the local static DB, or None when unavailable.
+
+    Never triggers a refresh — stale stop locations are fine. None signals the
+    caller to fall back to Transitland (disabled or static DB absent).
+    """
+    if not enabled() or not os.path.isfile(STATIC_DB_PATH):
+        return None
+    sdb = static_db.open_static_db(STATIC_DB_PATH)
+    try:
+        return lookup_mod.nearby_stops(sdb, lat, lon, radius_m, limit)
+    finally:
+        sdb.close()
 
 
 def refresh_if_stale(metrics: RefreshMetrics | None = None) -> RefreshOutcome:
@@ -102,9 +158,26 @@ def refresh_if_stale(metrics: RefreshMetrics | None = None) -> RefreshOutcome:
         metrics.final_rt_db_bytes = _size(RT_DB_PATH)
         return RefreshOutcome(False, False, rt_age, static_age, metrics)
 
-    # Download outside the lock — errors propagate to the caller.
-    zip_bytes = _download_static_data(metrics) if static_stale else None
-    tu_bytes, alerts_bytes = _download_rt_data(metrics) if rt_stale else (None, None)
+    # Downloads happen outside the lock. Each is wrapped so an upstream failure
+    # is non-fatal: we record the error and leave the existing DB untouched.
+    static_error: str | None = None
+    rt_error: str | None = None
+    zip_bytes: bytes | None = None
+    tu_bytes: bytes | None = None
+    alerts_bytes: bytes | None = None
+
+    if static_stale:
+        try:
+            zip_bytes = _download_static_data(metrics)
+        except Exception as e:  # noqa: BLE001 — never let upstream kill the request
+            static_error = str(e)
+            print(f"gtfs511 static download failed: {e}", file=sys.stderr)
+    if rt_stale:
+        try:
+            tu_bytes, alerts_bytes = _download_rt_data(metrics)
+        except Exception as e:  # noqa: BLE001
+            rt_error = str(e)
+            print(f"gtfs511 rt download failed: {e}", file=sys.stderr)
 
     refreshed_static = False
     refreshed_rt = False
@@ -112,23 +185,36 @@ def refresh_if_stale(metrics: RefreshMetrics | None = None) -> RefreshOutcome:
     with _refresh_lock():
         metrics.waited_for_lock_seconds = time.monotonic() - wait_start
         # Re-check under lock — a sibling may have just refreshed while we downloaded.
-        static_age = _age(static_db.static_refreshed_at(STATIC_DB_PATH))
-        rt_age = _age(rt_db.rt_refreshed_at(RT_DB_PATH))
-        static_stale = static_age is None or static_age >= _STATIC_TTL
-        rt_stale = rt_age is None or rt_age >= _RT_TTL
+        static_stale = _age(static_db.static_refreshed_at(STATIC_DB_PATH))
+        static_stale = static_stale is None or static_stale >= _STATIC_TTL
+        rt_stale = _age(rt_db.rt_refreshed_at(RT_DB_PATH))
+        rt_stale = rt_stale is None or rt_stale >= _RT_TTL
 
         if static_stale and zip_bytes is not None:
-            _build_static(zip_bytes, metrics)
-            refreshed_static = True
-            static_age = 0
+            try:
+                _build_static(zip_bytes, metrics)
+                refreshed_static = True
+            except Exception as e:  # noqa: BLE001 — old DB survives via temp-swap
+                static_error = str(e)
+                print(f"gtfs511 static build failed: {e}", file=sys.stderr)
         if rt_stale and tu_bytes is not None:
-            _build_rt(tu_bytes, alerts_bytes, metrics)
-            refreshed_rt = True
-            rt_age = 0
+            try:
+                _build_rt(tu_bytes, alerts_bytes, metrics)
+                refreshed_rt = True
+            except Exception as e:  # noqa: BLE001
+                rt_error = str(e)
+                print(f"gtfs511 rt build failed: {e}", file=sys.stderr)
 
+    # Re-read ages from disk so the returned ages reflect what lookup_departures
+    # will actually see (a failed refresh leaves the old DB's real age).
+    static_age = _age(static_db.static_refreshed_at(STATIC_DB_PATH))
+    rt_age = _age(rt_db.rt_refreshed_at(RT_DB_PATH))
     metrics.final_static_db_bytes = _size(STATIC_DB_PATH)
     metrics.final_rt_db_bytes = _size(RT_DB_PATH)
-    return RefreshOutcome(refreshed_rt, refreshed_static, rt_age, static_age, metrics)
+    return RefreshOutcome(
+        refreshed_rt, refreshed_static, rt_age, static_age, metrics,
+        rt_error=rt_error, static_error=static_error,
+    )
 
 
 def refresh_static(metrics: RefreshMetrics | None = None) -> RefreshMetrics:

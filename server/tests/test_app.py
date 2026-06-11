@@ -169,7 +169,9 @@ def _fake_window():
     return {"inbound_total": 1, "unique_ips": 1, "transitland_calls": 1,
             "nominatim_calls": 0, "error_count": 0, "by_endpoint": {},
             "by_client": {}, "app_inbound": 0, "app_transitland_calls": 0,
-            "dup_inbound": 0, "dup_transitland_saved": 0, "top_ips": []}
+            "dup_inbound": 0, "dup_transitland_saved": 0, "top_ips": [],
+            "five11_calls_actual": 0, "transitland_calls_actual": 1,
+            "nominatim_calls_actual": 0}
 
 
 _FAKE_STATS = {

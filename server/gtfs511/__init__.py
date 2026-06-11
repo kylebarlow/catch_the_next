@@ -16,20 +16,34 @@ GTFS_511_DB_DIR:
 
 from .api import (
     is_bay_area_feed,
+    in_bay_area,
+    metadata_for,
+    nearby_stops,
     refresh_if_stale,
     refresh_static,
     refresh_static_locked,
     lookup_departures,
+    data_ages,
+    static_db_available,
+    enabled,
+    REGIONAL_FEED_ID,
     RefreshOutcome,
     RefreshMetrics,
 )
 
 __all__ = [
     "is_bay_area_feed",
+    "in_bay_area",
+    "metadata_for",
+    "nearby_stops",
     "refresh_if_stale",
     "refresh_static",
     "refresh_static_locked",
     "lookup_departures",
+    "data_ages",
+    "static_db_available",
+    "enabled",
+    "REGIONAL_FEED_ID",
     "RefreshOutcome",
     "RefreshMetrics",
 ]

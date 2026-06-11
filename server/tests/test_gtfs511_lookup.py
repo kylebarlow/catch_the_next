@@ -1,7 +1,8 @@
 """Departure lookup tests — assert the output matches proxy._shape_departures
 field set and that RT entries dedupe scheduled entries for the same trip."""
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from gtfs511 import lookup, rt_db, static_db
 from tests.gtfs511_fixtures import make_static_gtfs_zip, make_tripupdates_pb
@@ -19,9 +20,17 @@ _TRANSITLAND_FIELDS = {
     "license_spdx", "license_url",
 }
 
-# Use a date deep enough in the future that the fixture's calendar covers it
-# and the local time is unambiguous re: DST.
-_NOW_UTC = int(datetime(2026, 5, 20, 16, 0, 0, tzinfo=timezone.utc).timestamp())  # 09:00 PDT
+# Anchor "now" to 09:00 local (America/Los_Angeles) on today's date so the
+# fixture's service window (built relative to date.today()) always covers it.
+# Departures in the fixture are at 10:00 local, i.e. 60 minutes after "now".
+_PACIFIC = ZoneInfo("America/Los_Angeles")
+_NOW_LOCAL = datetime.now(tz=_PACIFIC).replace(hour=9, minute=0, second=0, microsecond=0)
+_NOW_UTC = int(_NOW_LOCAL.timestamp())
+
+
+def _service_dates():
+    today = _NOW_LOCAL.date()
+    return [(today + timedelta(days=d)).strftime("%Y%m%d") for d in (-1, 0, 1)]
 
 
 def _meta() -> dict:
@@ -38,7 +47,7 @@ def _meta() -> dict:
 
 def _build_static(tmp_path, departure_time="10:00:00"):
     zip_bytes = make_static_gtfs_zip(
-        service_dates=["20260519", "20260521"],
+        service_dates=_service_dates(),
         departure_time=departure_time,
     )
     target = str(tmp_path / "static.sqlite")
@@ -94,7 +103,8 @@ def test_lookup_returns_live_when_rt_present(tmp_path):
     assert len(sched) == 1
     assert live[0]["route_short_name"] == "1"
     assert live[0]["headsign"] == "Toward Downtown"
-    assert live[0]["live_departure_utc"] == "2026-05-20T16:31:40Z"
+    expected_utc = datetime.fromtimestamp(predicted, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert live[0]["live_departure_utc"] == expected_utc
     assert sched[0]["route_short_name"] == "2"
 
 

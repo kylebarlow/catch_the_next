@@ -13,6 +13,7 @@ Two passes are merged + deduped per trip_id:
                      departures the RT feed didn't push.
 """
 
+import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -80,6 +81,62 @@ def lookup_departures(
     for r in out:
         r.pop("_trip_id", None)
     return out
+
+
+def nearby_stops(
+    static_db: sqlite3.Connection,
+    lat: float,
+    lon: float,
+    radius_m: float,
+    limit: int,
+) -> list[dict]:
+    """Return stops within *radius_m* of (lat, lon), nearest first.
+
+    Excludes station entrances/generic/boarding nodes (location_type 2/3/4);
+    keeps stops and stations (NULL/''/0/1). Full scan over ~40k rows is fine.
+    """
+    dlat = radius_m / 111_320.0
+    cos_lat = math.cos(math.radians(lat))
+    dlon = radius_m / (111_320.0 * cos_lat) if abs(cos_lat) > 1e-6 else 180.0
+    rows = static_db.execute(
+        """SELECT stop_id, stop_name, stop_lat, stop_lon, parent_station, location_type
+           FROM stops
+           WHERE CAST(stop_lat AS REAL) BETWEEN ? AND ?
+             AND CAST(stop_lon AS REAL) BETWEEN ? AND ?
+             AND (location_type IS NULL OR location_type IN ('', '0', '1'))""",
+        (lat - dlat, lat + dlat, lon - dlon, lon + dlon),
+    ).fetchall()
+
+    out = []
+    for r in rows:
+        try:
+            slat = float(r["stop_lat"])
+            slon = float(r["stop_lon"])
+        except (TypeError, ValueError):
+            continue
+        dist = _haversine_m(lat, lon, slat, slon)
+        if dist > radius_m:
+            continue
+        out.append({
+            "stop_id": r["stop_id"],
+            "stop_name": r["stop_name"],
+            "stop_lat": slat,
+            "stop_lon": slon,
+            "parent_station": r["parent_station"],
+            "location_type": r["location_type"],
+            "_dist_m": dist,
+        })
+    out.sort(key=lambda s: s["_dist_m"])
+    return out[:limit]
+
+
+def _haversine_m(lat1, lon1, lat2, lon2) -> float:
+    r = 6_371_000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────

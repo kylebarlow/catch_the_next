@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from google.transit import gtfs_realtime_pb2  # type: ignore
 
 
-def make_static_gtfs_zip(*, service_dates: list[str], departure_time: str = "10:00:00") -> bytes:
+def make_static_gtfs_zip(*, service_dates: list[str], departure_time: str = "10:00:00",
+                         extra_stops_rows: str = "") -> bytes:
     """Build a minimal but valid GTFS zip in memory.
 
     Topology:
@@ -33,7 +34,7 @@ def make_static_gtfs_zip(*, service_dates: list[str], departure_time: str = "10:
     files["stops.txt"] = "stop_id,stop_code,stop_name,stop_lat,stop_lon,parent_station,location_type\n"\
         "PARENT,,Parent Station,37.7,-122.4,,1\n"\
         "CHILD1,C1,Parent Station Platform 1,37.7,-122.4,PARENT,0\n"\
-        "STAND,SD,Standalone Stop,37.71,-122.41,,0\n"
+        "STAND,SD,Standalone Stop,37.71,-122.41,,0\n" + (extra_stops_rows or "")
     files["trips.txt"] = "trip_id,route_id,service_id,trip_headsign,direction_id,block_id,shape_id\n"\
         "T1,R1,SVC1,Toward Downtown,0,,\n"\
         "T2,R2,SVC1,Toward Outbound,1,,\n"

@@ -22,6 +22,9 @@ exposes them on certain feeds or stop variants — they are harmless to keep.
 _DEFAULT_LICENSE_URL = "https://511.org/open-data/terms-of-use"
 _DEFAULT_LICENSE_INSTRUCTIONS = "Data via 511 SF Bay Open Data Program."
 
+# The combined SF Bay Area regional feed (all 511 RG agencies).
+REGIONAL_FEED_ID = "f-sf~bay~area~rg"
+
 FEEDS: dict[str, dict] = {
     # Combined SF Bay Area regional feed — what Transitland actually returns
     # today for Bay Area stops. agency_id is None because the combined feed
@@ -139,6 +142,24 @@ FEEDS: dict[str, dict] = {
 
 def is_bay_area_feed(feed_onestop_id: str | None) -> bool:
     return bool(feed_onestop_id) and feed_onestop_id in FEEDS
+
+
+def in_bay_area(lat: float, lon: float) -> bool:
+    """True if (lat, lon) is inside the 511 RG feed's coverage rectangle.
+
+    Over-exclusion is safe (falls back to Transitland); over-inclusion would
+    hide local agencies, so we carve out three wedges for neighboring systems
+    NOT in the RG bundle (Santa Cruz Metro, Yolo/Davis, Lake County).
+    """
+    if not (36.95 <= lat <= 38.87 and -123.55 <= lon <= -121.55):
+        return False
+    if lat < 37.18 and lon < -121.84:   # Santa Cruz strip
+        return False
+    if lat > 38.45 and lon > -122.10:   # Yolo / Davis
+        return False
+    if lat > 38.65 and lon > -122.75:   # Lake county
+        return False
+    return True
 
 
 def metadata_for(feed_onestop_id: str) -> dict:
