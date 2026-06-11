@@ -307,7 +307,10 @@ def lookup_departures(
                 stop_id=stop_id, feed_metadata=meta,
                 next_seconds=next_seconds, now_utc=now_utc,
             )
-            out[(feed_id, stop_id)] = {"departures": deps, "alerts": []}
+            alerts = lookup_mod.lookup_alerts(
+                static_db=sdb, rt_db=rdb, stop_id=stop_id, now_utc=now_utc,
+            )
+            out[(feed_id, stop_id)] = {"departures": deps, "alerts": alerts}
     finally:
         sdb.close()
         if rdb is not None:

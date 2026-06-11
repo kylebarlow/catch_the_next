@@ -5,7 +5,17 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from gtfs511 import lookup, rt_db, static_db
-from tests.gtfs511_fixtures import make_static_gtfs_zip, make_tripupdates_pb
+from tests.gtfs511_fixtures import (
+    make_servicealerts_pb,
+    make_static_gtfs_zip,
+    make_tripupdates_pb,
+)
+
+# Fields proxy._shape_alerts emits — lookup_alerts must match this set.
+_ALERT_FIELDS = {
+    "cause", "effect", "severity_level", "header_text", "description_text",
+    "tts_header_text", "tts_description_text", "url", "active_period",
+}
 
 
 # The 19 fields proxy._shape_departures emits. Lookup output must match this set.
@@ -156,3 +166,107 @@ def test_lookup_sorts_by_effective_departure(tmp_path):
         sdb.close()
     # T2 (scheduled 60min) should come first, then T1 (LIVE 70min).
     assert [r["route_short_name"] for r in out] == ["2", "1"]
+
+
+# ─── alerts ─────────────────────────────────────────────────────────────────
+
+
+def _build_rt_with_alert(tmp_path, **alert_kwargs):
+    pb = make_tripupdates_pb(predicted_epoch=_NOW_UTC + 600, trip_id="T1")
+    alerts_pb = make_servicealerts_pb(**alert_kwargs)
+    rt_target = str(tmp_path / "rt.sqlite")
+    rt_db.build_rt_db(pb, alerts_bytes=alerts_pb, target_path=rt_target)
+    return rt_db.open_rt_db(rt_target)
+
+
+def _alerts_for_stop(tmp_path, stop_id="CHILD1", **alert_kwargs):
+    sdb = _build_static(tmp_path)
+    rdb = _build_rt_with_alert(tmp_path, **alert_kwargs)
+    try:
+        return lookup.lookup_alerts(
+            static_db=sdb, rt_db=rdb, stop_id=stop_id, now_utc=_NOW_UTC,
+        )
+    finally:
+        rdb.close()
+        sdb.close()
+
+
+def test_alerts_none_when_no_rt_db(tmp_path):
+    sdb = _build_static(tmp_path)
+    try:
+        assert lookup.lookup_alerts(
+            static_db=sdb, rt_db=None, stop_id="CHILD1", now_utc=_NOW_UTC,
+        ) == []
+    finally:
+        sdb.close()
+
+
+def test_feed_wide_alert_included(tmp_path):
+    # No informed entities → feed-wide, applies to every stop.
+    out = _alerts_for_stop(tmp_path, header="System alert", informed_entities=None)
+    assert len(out) == 1
+    assert set(out[0].keys()) == _ALERT_FIELDS
+    assert out[0]["header_text"] == "System alert"
+    assert out[0]["cause"] == "MAINTENANCE"
+    assert out[0]["effect"] == "MODIFIED_SERVICE"
+
+
+def test_alert_matched_by_stop_id(tmp_path):
+    out = _alerts_for_stop(tmp_path, informed_entities=[{"stop_id": "CHILD1"}])
+    assert len(out) == 1
+
+
+def test_alert_matched_by_parent_station_child(tmp_path):
+    # Query the parent; alert names the child platform.
+    out = _alerts_for_stop(tmp_path, stop_id="PARENT",
+                           informed_entities=[{"stop_id": "CHILD1"}])
+    assert len(out) == 1
+
+
+def test_alert_matched_by_route_serving_stop(tmp_path):
+    # R1 serves CHILD1 in the fixture.
+    out = _alerts_for_stop(tmp_path, informed_entities=[{"route_id": "R1"}])
+    assert len(out) == 1
+
+
+def test_alert_matched_by_agency_serving_stop(tmp_path):
+    out = _alerts_for_stop(tmp_path, informed_entities=[{"agency_id": "TA"}])
+    assert len(out) == 1
+
+
+def test_alert_not_matched_by_unrelated_stop(tmp_path):
+    out = _alerts_for_stop(tmp_path, informed_entities=[{"stop_id": "OTHER"}])
+    assert out == []
+
+
+def test_alert_not_matched_by_unrelated_route(tmp_path):
+    out = _alerts_for_stop(tmp_path, informed_entities=[{"route_id": "R999"}])
+    assert out == []
+
+
+def test_alert_anded_within_entity(tmp_path):
+    # route R1 serves the stop but stop_id OTHER does not — ANDed, so no match.
+    out = _alerts_for_stop(
+        tmp_path, informed_entities=[{"route_id": "R1", "stop_id": "OTHER"}],
+    )
+    assert out == []
+
+
+def test_inactive_alert_filtered_out(tmp_path):
+    # active_period entirely in the past.
+    out = _alerts_for_stop(
+        tmp_path,
+        informed_entities=[{"agency_id": "TA"}],
+        active_period=(_NOW_UTC - 7200, _NOW_UTC - 3600),
+    )
+    assert out == []
+
+
+def test_active_alert_within_period_included(tmp_path):
+    out = _alerts_for_stop(
+        tmp_path,
+        informed_entities=[{"agency_id": "TA"}],
+        active_period=(_NOW_UTC - 3600, _NOW_UTC + 3600),
+    )
+    assert len(out) == 1
+    assert out[0]["active_period"] == [{"start": _NOW_UTC - 3600, "end": _NOW_UTC + 3600}]

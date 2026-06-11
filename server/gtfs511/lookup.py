@@ -13,6 +13,7 @@ Two passes are merged + deduped per trip_id:
                      departures the RT feed didn't push.
 """
 
+import json
 import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -83,6 +84,72 @@ def lookup_departures(
     return out
 
 
+def lookup_alerts(
+    static_db: sqlite3.Connection,
+    rt_db: sqlite3.Connection | None,
+    stop_id: str,
+    now_utc: int | None = None,
+) -> list[dict]:
+    """Return active GTFS-RT alerts relevant to one stop, in proxy._shape_alerts shape.
+
+    An alert is relevant when one of its informed entities targets this stop —
+    by stop_id (within the parent-station group), by a route that serves the
+    stop, or by an agency that serves the stop. An alert with no informed
+    entities is treated as feed-wide and always included. Within a single
+    informed entity, set fields are ANDed (GTFS-RT semantics); across entities
+    they are ORed. Inactive alerts (outside their active_period) are dropped.
+
+    Alerts live in the realtime DB; with *rt_db* None this returns [].
+    """
+    if rt_db is None:
+        return []
+    now_utc = now_utc if now_utc is not None else int(datetime.now(tz=timezone.utc).timestamp())
+
+    stop_ids = set(_resolve_stop_id_group(static_db, stop_id))
+    route_ids, agency_ids = _routes_agencies_for_stops(static_db, stop_ids)
+
+    seen: set = set()
+    alerts: list[dict] = []
+    for row in rt_db.execute(
+        "SELECT cause, effect, severity, header, description, url, "
+        "active_periods, informed_entities FROM rt_alerts"
+    ):
+        try:
+            informed = json.loads(row["informed_entities"] or "[]")
+        except (ValueError, TypeError):
+            informed = []
+        if informed and not any(
+            _entity_matches(e, stop_ids, route_ids, agency_ids) for e in informed
+        ):
+            continue
+
+        try:
+            periods = json.loads(row["active_periods"] or "[]")
+        except (ValueError, TypeError):
+            periods = []
+        if not _alert_active(periods, now_utc):
+            continue
+
+        key = (row["header"], row["description"], row["cause"], row["effect"])
+        if key in seen:
+            continue
+        seen.add(key)
+        alerts.append({
+            "cause": row["cause"],
+            "effect": row["effect"],
+            "severity_level": row["severity"],
+            "header_text": row["header"],
+            "description_text": row["description"],
+            "tts_header_text": None,
+            "tts_description_text": None,
+            "url": row["url"],
+            "active_period": [
+                {"start": p.get("start"), "end": p.get("end")} for p in periods
+            ],
+        })
+    return alerts
+
+
 def nearby_stops(
     static_db: sqlite3.Connection,
     lat: float,
@@ -149,6 +216,58 @@ def _resolve_stop_id_group(static_db: sqlite3.Connection, stop_id: str) -> list[
     ).fetchall()
     ids = [r[0] for r in rows]
     return ids or [stop_id]
+
+
+def _routes_agencies_for_stops(
+    static_db: sqlite3.Connection, stop_ids: set[str]
+) -> tuple[set[str], set[str]]:
+    """Return (route_ids, agency_ids) of every route serving any of *stop_ids*."""
+    if not stop_ids:
+        return set(), set()
+    placeholders = ",".join("?" * len(stop_ids))
+    rows = static_db.execute(
+        f"""SELECT DISTINCT t.route_id, r.agency_id
+            FROM stop_times st
+            JOIN trips t ON t.trip_id = st.trip_id
+            JOIN routes r ON r.route_id = t.route_id
+            WHERE st.stop_id IN ({placeholders})""",
+        tuple(stop_ids),
+    ).fetchall()
+    route_ids = {r["route_id"] for r in rows if r["route_id"]}
+    agency_ids = {r["agency_id"] for r in rows if r["agency_id"]}
+    return route_ids, agency_ids
+
+
+def _entity_matches(ent: dict, stop_ids: set, route_ids: set, agency_ids: set) -> bool:
+    """True if informed entity *ent* targets the stop. Set fields ANDed; unset = wildcard."""
+    sid = ent.get("stop_id")
+    rid = ent.get("route_id")
+    aid = ent.get("agency_id")
+    tid = ent.get("trip_id")
+    if not (sid or rid or aid or tid):
+        return True  # empty selector = whole feed
+    if sid and sid not in stop_ids:
+        return False
+    if rid and rid not in route_ids:
+        return False
+    if aid and aid not in agency_ids:
+        return False
+    # A trip-only selector can't be cheaply verified against this stop; skip it.
+    if tid and not (sid or rid or aid):
+        return False
+    return True
+
+
+def _alert_active(periods: list, now: int) -> bool:
+    """Mirror proxy._alert_is_active: no periods = always active."""
+    if not periods:
+        return True
+    for p in periods:
+        start = p.get("start")
+        end = p.get("end")
+        if ((not start) or start <= now) and ((not end) or end >= now):
+            return True
+    return False
 
 
 def _agency_timezone(static_db: sqlite3.Connection) -> str | None:

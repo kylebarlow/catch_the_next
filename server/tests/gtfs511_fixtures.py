@@ -80,16 +80,42 @@ def make_tripupdates_pb(*, predicted_epoch: int, trip_id: str = "T1",
     return feed.SerializeToString()
 
 
-def make_servicealerts_pb(*, header: str = "Test Alert", description: str = "Body") -> bytes:
+def make_servicealerts_pb(*, header: str = "Test Alert", description: str = "Body",
+                          informed_entities: list[dict] | None = None,
+                          active_period: tuple[int | None, int | None] | None = None,
+                          entity_id: str = "alert-1") -> bytes:
+    """Build a GTFS-RT ServiceAlerts protobuf with a single alert.
+
+    *informed_entities* is a list of dicts with any of agency_id/route_id/
+    stop_id/trip_id; an empty/None list emits no informed entity (feed-wide).
+    *active_period* is an optional (start, end) epoch-seconds tuple.
+    """
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.header.gtfs_realtime_version = "2.0"
     feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.FULL_DATASET
     feed.header.timestamp = int(datetime.now(tz=timezone.utc).timestamp())
     entity = feed.entity.add()
-    entity.id = "alert-1"
+    entity.id = entity_id
     a = entity.alert
     a.header_text.translation.add(language="en", text=header)
     a.description_text.translation.add(language="en", text=description)
     a.cause = gtfs_realtime_pb2.Alert.MAINTENANCE
     a.effect = gtfs_realtime_pb2.Alert.MODIFIED_SERVICE
+    for ie in informed_entities or []:
+        sel = a.informed_entity.add()
+        if ie.get("agency_id"):
+            sel.agency_id = ie["agency_id"]
+        if ie.get("route_id"):
+            sel.route_id = ie["route_id"]
+        if ie.get("stop_id"):
+            sel.stop_id = ie["stop_id"]
+        if ie.get("trip_id"):
+            sel.trip.trip_id = ie["trip_id"]
+    if active_period is not None:
+        period = a.active_period.add()
+        start, end = active_period
+        if start is not None:
+            period.start = start
+        if end is not None:
+            period.end = end
     return feed.SerializeToString()
