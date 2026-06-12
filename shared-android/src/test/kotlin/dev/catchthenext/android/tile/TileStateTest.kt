@@ -18,11 +18,25 @@ class TileStateTest {
     private fun stop(id: Long, lat: Double, lon: Double) =
         Stop(id, "S$id", "Stop $id", lat, lon, onestopId = "s-$id")
 
-    private fun cachedDep(minutesFromNow: Long, timeSource: DepartureTimeSource = DepartureTimeSource.SCHEDULED) = CachedDeparture(
-        routeShortName = "14",
-        headsign = "Ferry Plaza",
-        departureEpochMillis = System.currentTimeMillis() + minutesFromNow * 60_000,
-        timeSource = timeSource
+    // currentMinutes() floors (departure - now) / 60_000 against a clock read *after* these
+    // departures are built, so a departure placed exactly on a minute boundary floors to one
+    // minute less once a few millis elapse. Bake in a half-minute buffer so the integer-minute
+    // result is stable regardless of how long the test takes to run.
+    private val minuteBufferMillis = 30_000L
+
+    private fun cachedDep(minutesFromNow: Long, timeSource: DepartureTimeSource = DepartureTimeSource.SCHEDULED) =
+        depAt("14", "Ferry Plaza", minutesFromNow, timeSource)
+
+    private fun depAt(
+        route: String,
+        headsign: String,
+        minutesFromNow: Long,
+        timeSource: DepartureTimeSource = DepartureTimeSource.SCHEDULED,
+    ) = CachedDeparture(
+        routeShortName = route,
+        headsign = headsign,
+        departureEpochMillis = System.currentTimeMillis() + minutesFromNow * 60_000 + minuteBufferMillis,
+        timeSource = timeSource,
     )
 
     private fun fetchReturning(vararg minutes: Long): suspend (List<Long>) -> Map<Long, CachedStopFetch> = { stopIds ->
@@ -178,11 +192,10 @@ class TileStateTest {
 
     @Test
     fun `groupDepartures groups same route into one entry`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
-            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000, DepartureTimeSource.SCHEDULED),
+            depAt("14", "Ferry Plaza", 5),
+            depAt("14", "Ferry Plaza", 15),
         )))
         assertEquals(1, groups.size)
         assertEquals(listOf(5L, 15L), groups[0].times.map { it.minutes })
@@ -190,13 +203,12 @@ class TileStateTest {
 
     @Test
     fun `groupDepartures caps times at maxPerGroup`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
-            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000, DepartureTimeSource.SCHEDULED),
-            CachedDeparture("14", "Ferry Plaza", now + 25 * 60_000, DepartureTimeSource.SCHEDULED),
-            CachedDeparture("14", "Ferry Plaza", now + 35 * 60_000, DepartureTimeSource.SCHEDULED),
+            depAt("14", "Ferry Plaza", 5),
+            depAt("14", "Ferry Plaza", 15),
+            depAt("14", "Ferry Plaza", 25),
+            depAt("14", "Ferry Plaza", 35),
         )), maxPerGroup = 3)
         assertEquals(1, groups.size)
         assertEquals(3, groups[0].times.size)
@@ -205,11 +217,10 @@ class TileStateTest {
 
     @Test
     fun `groupDepartures separates different routes`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
-            CachedDeparture("49", "Caltrain", now + 10 * 60_000, DepartureTimeSource.SCHEDULED),
+            depAt("14", "Ferry Plaza", 5),
+            depAt("49", "Caltrain", 10),
         )))
         assertEquals(2, groups.size)
         assertEquals("14", groups[0].routeShortName)
@@ -218,35 +229,32 @@ class TileStateTest {
 
     @Test
     fun `groupDepartures sorts groups by first departure time`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("49", "Caltrain", now + 10 * 60_000, DepartureTimeSource.SCHEDULED),
-            CachedDeparture("14", "Ferry Plaza", now + 3 * 60_000, DepartureTimeSource.SCHEDULED),
+            depAt("49", "Caltrain", 10),
+            depAt("14", "Ferry Plaza", 3),
         )))
         assertEquals("14", groups[0].routeShortName, "Route 14 departs sooner, should be first")
     }
 
     @Test
     fun `groupDepartures sets showStopTag true for multiple stops`() {
-        val now = System.currentTimeMillis()
         val s1 = stop(1L, 37.770, -122.410)
         val s2 = stop(2L, 37.771, -122.410)
         val groups = groupDepartures(listOf(
-            swd(s1, CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED)),
-            swd(s2, CachedDeparture("22", "Mission", now + 8 * 60_000, DepartureTimeSource.SCHEDULED)),
+            swd(s1, depAt("14", "Ferry Plaza", 5)),
+            swd(s2, depAt("22", "Mission", 8)),
         ))
         assertTrue(groups.all { it.showStopTag })
     }
 
     @Test
     fun `groupDepartures respects custom filter`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(
             stops = listOf(swd(s,
-                CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
-                CachedDeparture("14", "Ferry Plaza", now + 70 * 60_000, DepartureTimeSource.SCHEDULED),
+                depAt("14", "Ferry Plaza", 5),
+                depAt("14", "Ferry Plaza", 70),
             )),
             filter = { it.currentMinutes() in 0..59 },
         )
@@ -356,20 +364,18 @@ class TileStateTest {
 
     @Test
     fun `realtime departure maps to LIVE timeSource`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.LIVE),
+            depAt("14", "Ferry Plaza", 5, DepartureTimeSource.LIVE),
         )))
         assertEquals(DepartureTimeSource.LIVE, groups[0].times[0].timeSource)
     }
 
     @Test
     fun `scheduled-only departure maps to SCHEDULED timeSource`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.SCHEDULED),
+            depAt("14", "Ferry Plaza", 5, DepartureTimeSource.SCHEDULED),
         )))
         assertEquals(DepartureTimeSource.SCHEDULED, groups[0].times[0].timeSource)
     }
@@ -398,11 +404,10 @@ class TileStateTest {
 
     @Test
     fun `grouping preserves source for each displayed time`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("14", "Ferry Plaza", now + 5 * 60_000, DepartureTimeSource.LIVE),
-            CachedDeparture("14", "Ferry Plaza", now + 15 * 60_000, DepartureTimeSource.SCHEDULED),
+            depAt("14", "Ferry Plaza", 5, DepartureTimeSource.LIVE),
+            depAt("14", "Ferry Plaza", 15, DepartureTimeSource.SCHEDULED),
         )))
         assertEquals(1, groups.size)
         assertEquals(2, groups[0].times.size)
@@ -412,11 +417,10 @@ class TileStateTest {
 
     @Test
     fun `sorting uses effective display minutes`() {
-        val now = System.currentTimeMillis()
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
-            CachedDeparture("49", "Caltrain", now + 10 * 60_000, DepartureTimeSource.SCHEDULED),
-            CachedDeparture("14", "Ferry Plaza", now + 3 * 60_000, DepartureTimeSource.LIVE),
+            depAt("49", "Caltrain", 10, DepartureTimeSource.SCHEDULED),
+            depAt("14", "Ferry Plaza", 3, DepartureTimeSource.LIVE),
         )))
         assertEquals("14", groups[0].routeShortName)
         assertEquals(3L, groups[0].times[0].minutes)
