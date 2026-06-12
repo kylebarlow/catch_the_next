@@ -75,8 +75,7 @@ suspend fun updateNearbyStopsDepartures(
         inRange
     } else {
         val closest = favorites.closestTo(lat, lon) ?: return TileState.NoFavorites
-        listOf(Pair(closest, haversineMeters(lat, lon, closest.lat, closest.lon))
-        )
+        listOf(Pair(closest, haversineMeters(lat, lon, closest.lat, closest.lon)))
     }
 
     val selectedIds = selected.map { it.first.id }
@@ -191,6 +190,20 @@ suspend fun resolveStaleStops(
     return if (anyResolved) updated else null
 }
 
+private fun CachedTileData.cachedFor(stopId: Long): CachedStopDepartures? =
+    nearbyDepartures.firstOrNull { it.stopId == stopId }
+
+private fun CachedStopDepartures.toFetch(): CachedStopFetch =
+    CachedStopFetch(departures, alerts ?: emptyList(), fetchedAt)
+
+private fun StopDepartures.toFetch(fetchTime: Long): CachedStopFetch = CachedStopFetch(
+    departures = departures.map { dep ->
+        CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
+    },
+    alerts = alerts,
+    fetchedAt = fetchTime,
+)
+
 /** Network fetch + per-stop 60 s cache check + error fallback for a single stop. */
 fun makeFetchNetworkDepartures(
     getDepartures: suspend (Long) -> StopDepartures,
@@ -198,24 +211,14 @@ fun makeFetchNetworkDepartures(
     forceFresh: Boolean = false,
 ): suspend (Long) -> CachedStopFetch = { stopId ->
     val now = System.currentTimeMillis()
-    val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+    val cached = cache.cachedFor(stopId)
     if (!forceFresh && cached != null && now - cached.fetchedAt < CACHE_TTL_MS) {
-        CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
+        cached.toFetch()
     } else {
         runCatching {
-            val stopDeps = getDepartures(stopId)
-            val fetchTime = System.currentTimeMillis()
-            CachedStopFetch(
-                departures = stopDeps.departures.map { dep ->
-                    CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
-                },
-                alerts = stopDeps.alerts,
-                fetchedAt = fetchTime,
-            )
+            getDepartures(stopId).toFetch(System.currentTimeMillis())
         }.getOrElse { e ->
-            if (cached != null && cached.departures.isNotEmpty()) {
-                CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
-            } else throw e
+            if (cached != null && cached.departures.isNotEmpty()) cached.toFetch() else throw e
         }
     }
 }
@@ -235,9 +238,9 @@ fun makeFetchNetworkDeparturesBatch(
 
         val staleStopIds = mutableListOf<Long>()
         for (stopId in stopIds) {
-            val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+            val cached = cache.cachedFor(stopId)
             if (!forceFresh && cached != null && now - cached.fetchedAt < CACHE_TTL_MS) {
-                result[stopId] = CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
+                result[stopId] = cached.toFetch()
             } else {
                 staleStopIds.add(stopId)
             }
@@ -255,9 +258,9 @@ fun makeFetchNetworkDeparturesBatch(
             val queryableIds = onestopToLong.values.toSet()
             for (stopId in staleStopIds) {
                 if (stopId !in queryableIds) {
-                    val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+                    val cached = cache.cachedFor(stopId)
                     if (cached != null && cached.departures.isNotEmpty()) {
-                        result[stopId] = CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
+                        result[stopId] = cached.toFetch()
                     }
                 }
             }
@@ -268,20 +271,14 @@ fun makeFetchNetworkDeparturesBatch(
                     val fetchTime = System.currentTimeMillis()
                     for ((onestopId, stopId) in onestopToLong) {
                         val stopDeps = batchResult[onestopId] ?: continue
-                        result[stopId] = CachedStopFetch(
-                            departures = stopDeps.departures.map { dep ->
-                                CachedDeparture(dep.routeShortName, dep.headsign, fetchTime + dep.displayDepartureMinutes * 60_000, dep.timeSource, dep.agencyName)
-                            },
-                            alerts = stopDeps.alerts,
-                            fetchedAt = fetchTime,
-                        )
+                        result[stopId] = stopDeps.toFetch(fetchTime)
                     }
                 }.getOrElse { e ->
                     for (stopId in onestopToLong.values) {
                         if (stopId !in result) {
-                            val cached = cache.nearbyDepartures.firstOrNull { it.stopId == stopId }
+                            val cached = cache.cachedFor(stopId)
                             if (cached != null && cached.departures.isNotEmpty()) {
-                                result[stopId] = CachedStopFetch(cached.departures, cached.alerts ?: emptyList(), cached.fetchedAt)
+                                result[stopId] = cached.toFetch()
                             }
                         }
                     }

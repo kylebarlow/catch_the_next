@@ -9,18 +9,20 @@ data class SyncState(
     val myCounter: Long = 0L,
     val items: Map<String, FavoriteEntry> = emptyMap(),
 ) {
-    fun toJson(): String = Gson().toJson(this)
+    fun toJson(): String = gson.toJson(this)
 
     companion object {
+        private val gson = Gson()
+
         fun fromJson(json: String): SyncState? =
-            runCatching { Gson().fromJson(json, SyncState::class.java) }.getOrNull()
+            runCatching { gson.fromJson(json, SyncState::class.java) }.getOrNull()
 
         fun itemsFromJson(json: String): Map<String, FavoriteEntry>? = runCatching {
             val type = object : TypeToken<Map<String, FavoriteEntry>>() {}.type
-            Gson().fromJson<Map<String, FavoriteEntry>>(json, type)
+            gson.fromJson<Map<String, FavoriteEntry>>(json, type)
         }.getOrNull()
 
-        fun itemsToJson(items: Map<String, FavoriteEntry>): String = Gson().toJson(items)
+        fun itemsToJson(items: Map<String, FavoriteEntry>): String = gson.toJson(items)
     }
 }
 

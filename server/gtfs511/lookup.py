@@ -19,6 +19,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from gtfs_util import alert_periods_active as _alert_active, haversine_meters as _haversine_m
+
 # Field names that proxy._shape_departures emits. Keep this in lock-step.
 _DEPARTURE_FIELDS = (
     "route_short_name", "headsign",
@@ -197,15 +199,6 @@ def nearby_stops(
     return out[:limit]
 
 
-def _haversine_m(lat1, lon1, lat2, lon2) -> float:
-    r = 6_371_000.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    d_phi = math.radians(lat2 - lat1)
-    d_lambda = math.radians(lon2 - lon1)
-    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -256,18 +249,6 @@ def _entity_matches(ent: dict, stop_ids: set, route_ids: set, agency_ids: set) -
     if tid and not (sid or rid or aid):
         return False
     return True
-
-
-def _alert_active(periods: list, now: int) -> bool:
-    """Mirror proxy._alert_is_active: no periods = always active."""
-    if not periods:
-        return True
-    for p in periods:
-        start = p.get("start")
-        end = p.get("end")
-        if ((not start) or start <= now) and ((not end) or end >= now):
-            return True
-    return False
 
 
 def _agency_timezone(static_db: sqlite3.Connection) -> str | None:

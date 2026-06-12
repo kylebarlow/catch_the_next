@@ -34,9 +34,7 @@ fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewMo
             Text(state.msg)
         }
         is DetailsUi.Loaded -> {
-            val feedNames = (listOfNotNull(state.stop.feed) + state.departures.mapNotNull { it.feed })
-                .distinctBy { it.feedOnestopId }
-                .mapNotNull { it.feedName ?: it.feedOnestopId }
+            val feedNames = state.feedNames()
             ScalingLazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = ScalingLazyColumnDefaults.padding(

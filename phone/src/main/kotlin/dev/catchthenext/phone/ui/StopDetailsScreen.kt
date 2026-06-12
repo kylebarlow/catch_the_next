@@ -54,9 +54,7 @@ fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewMo
                 is DetailsUi.Loading -> CircularProgressIndicator()
                 is DetailsUi.Error -> Text(state.msg)
                 is DetailsUi.Loaded -> {
-                    val feedNames = (listOfNotNull(state.stop.feed) + state.departures.mapNotNull { it.feed })
-                        .distinctBy { it.feedOnestopId }
-                        .mapNotNull { it.feedName ?: it.feedOnestopId }
+                    val feedNames = state.feedNames()
                     val dataLabel = when (feedNames.size) {
                         0 -> null
                         1 -> "Data: ${feedNames.first()}"

@@ -16,7 +16,13 @@ import kotlinx.coroutines.launch
 
 sealed interface DetailsUi {
     object Loading : DetailsUi
-    data class Loaded(val stop: Stop, val departures: List<Departure>, val isFavorite: Boolean, val alerts: List<Alert> = emptyList()) : DetailsUi
+    data class Loaded(val stop: Stop, val departures: List<Departure>, val isFavorite: Boolean, val alerts: List<Alert> = emptyList()) : DetailsUi {
+        /** Distinct display names of the feeds contributing to this stop's data. */
+        fun feedNames(): List<String> =
+            (listOfNotNull(stop.feed) + departures.mapNotNull { it.feed })
+                .distinctBy { it.feedOnestopId }
+                .mapNotNull { it.feedName ?: it.feedOnestopId }
+    }
     data class Error(val msg: String) : DetailsUi
 }
 

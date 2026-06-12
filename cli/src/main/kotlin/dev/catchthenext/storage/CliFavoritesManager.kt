@@ -53,8 +53,4 @@ class CliFavoritesManager(
     override fun isFavorite(onestopId: String): Boolean = getFavorites().any { it.onestopId == onestopId }
 
     override fun favoritesFlow(): Flow<List<Stop>> = _flow.asStateFlow()
-
-    private fun emitToFlow() {
-        _flow.tryEmit(getFavorites())
-    }
 }

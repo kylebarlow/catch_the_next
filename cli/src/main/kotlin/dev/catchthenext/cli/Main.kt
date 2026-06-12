@@ -67,7 +67,7 @@ private fun searchNearbyStops(client: TransitlandClient, favorites: FavoritesMan
 
     println("\n  Nearby stops:")
     stops.forEachIndexed { i, stop ->
-        val star = if (favorites.isFavorite(stop.id)) " ★" else ""
+        val star = if (favorites.isFavorite(stop.onestopId ?: "")) " ★" else ""
         println("  [${i + 1}] ${stop.displayString()}$star")
     }
 
@@ -143,7 +143,7 @@ private fun removeFavorite(favorites: FavoritesManager) {
     for (idx in indices) {
         if (idx in stops.indices) {
             val stop = stops[idx]
-            if (favorites.removeFavorite(stop.id)) {
+            if (favorites.removeFavorite(stop.onestopId ?: "")) {
                 println("  Removed: ${stop.stopName}")
             }
         } else {

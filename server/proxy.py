@@ -1,5 +1,4 @@
 import json
-import math
 import socket
 import sys
 import threading
@@ -14,6 +13,7 @@ import bottle
 import cache
 import counters
 from config import load_config
+from gtfs_util import alert_periods_active, haversine_meters as _haversine_meters
 
 try:
     import gtfs511  # noqa: F401  — optional, may be disabled by config
@@ -313,16 +313,6 @@ def get_stops(lat, lon, radius=500, limit=20):
     return {"stops": stops}
 
 
-def _haversine_meters(lat1, lon1, lat2, lon2):
-    r = 6_371_000.0
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    d_phi = math.radians(lat2 - lat1)
-    d_lambda = math.radians(lon2 - lon1)
-    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
 def _resolve_translation(arr):
     if not arr:
         return None
@@ -333,20 +323,6 @@ def _resolve_translation(arr):
         if item.get("text"):
             return item["text"]
     return None
-
-
-def _alert_is_active(alert, now):
-    periods = alert.get("active_period") or []
-    if not periods:
-        return True
-    for period in periods:
-        start = period.get("start")
-        end = period.get("end")
-        start_ok = (not start) or start <= now
-        end_ok = (not end) or end >= now
-        if start_ok and end_ok:
-            return True
-    return False
 
 
 def _shape_alerts(data, now=None):
@@ -366,7 +342,7 @@ def _shape_alerts(data, now=None):
             key = (header, description, cause, effect)
             if key in seen:
                 continue
-            if not _alert_is_active(alert, now):
+            if not alert_periods_active(alert.get("active_period") or [], now):
                 continue
             seen.add(key)
             alerts.append({
