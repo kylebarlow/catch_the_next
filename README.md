@@ -96,12 +96,40 @@ Responses mirror Transitland's shape. Auth failures → `401`. Rate limit exceed
 | Var | Required | Default | Notes |
 |---|---|---|---|
 | `TRANSITLAND_API_KEY` | yes | — | Real upstream key, never sent to clients |
-| `APP_API_KEYS` | yes | — | Comma-separated list of valid client keys |
+| `APP_API_KEYS` | yes | — | Comma-separated list of valid client keys (see key rotation below) |
 | `TRANSITLAND_BASE_URL` | no | `https://transit.land/api/v2/rest` | Override for testing |
 | `RATE_LIMIT_PER_HOUR` | no | `500` | |
 | `ACCESS_LOG_PATH` | no | `/home/logs/access_log` | Set to `/var/log/apache2/access.log` in Docker |
 | `UPSTREAM_CONNECT_TIMEOUT` | no | `5` | Seconds |
 | `UPSTREAM_READ_TIMEOUT` | no | `10` | Seconds |
+| `STATS_PATH_SECRET` | no | — | Token for the stats dashboard; sent as a header, not in the URL (see below) |
+
+### Client API key (shared, not per-user)
+
+`APP_API_KEYS` is a coarse "is this our app" speed bump, **not** a per-user
+credential. The single `APP_API_KEY` baked into every APK via `BuildConfig` is
+recoverable from a distributed build (`strings`/`apktool`), so the real abuse
+backstop is the rate limiter plus Transitland/511's own per-key quotas — not the
+key's secrecy.
+
+Because `APP_API_KEYS` accepts a comma-separated list, you can **rotate without an
+app update**: ship the new key in the next release while keeping the old one in
+`APP_API_KEYS`, then drop the old key after that release is widely installed.
+
+### Stats dashboard
+
+The proxy exposes `/_internal/stats` (HTML) and `/_internal/stats.json` gated by
+`STATS_PATH_SECRET`. The token travels in a request header, **never the URL** —
+a secret in the path would be written verbatim into the access log this app reads
+back, plus browser history and intermediary logs.
+
+```bash
+curl -H "X-Stats-Token: $STATS_PATH_SECRET" http://localhost:39217/_internal/stats
+# or: -H "Authorization: Bearer $STATS_PATH_SECRET"
+```
+
+A wrong or missing token returns `404` (no oracle). For browser viewing, use an
+extension that injects the `X-Stats-Token` header.
 
 ### Tests
 

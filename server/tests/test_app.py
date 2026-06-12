@@ -17,7 +17,7 @@ def testapp():
     return app
 
 
-def _call(testapp, path, query="", api_key="test-key"):
+def _call(testapp, path, query="", api_key="test-key", stats_token=None):
     environ = {
         "REQUEST_METHOD": "GET",
         "PATH_INFO": path,
@@ -30,6 +30,8 @@ def _call(testapp, path, query="", api_key="test-key"):
         "SERVER_PORT": "80",
         "HTTP_X_API_KEY": api_key or "",
     }
+    if stats_token is not None:
+        environ["HTTP_X_STATS_TOKEN"] = stats_token
     captured = {}
 
     def start_response(status, headers, exc_info=None):
@@ -69,6 +71,47 @@ def test_batch_departures_rejects_too_many_ids(mock_upstream):
     result = json.loads(body)
     assert result["error"] == "bad_request"
     assert "too many" in result["detail"]
+
+
+@patch("proxy._upstream_get")
+def test_batch_departures_400_non_numeric_next(mock_upstream):
+    captured, body = _call(app, "/api/v2/rest/departures",
+                           query="onestop_ids=s-abc&next=abc")
+    assert captured["status"].startswith("400")
+    result = json.loads(body)
+    assert result["error"] == "bad_request"
+    assert "next" in result["detail"]
+    mock_upstream.assert_not_called()
+
+
+@patch("app.get_departures")
+def test_departures_400_non_numeric_next(mock_get_departures):
+    captured, body = _call(app, "/api/v2/rest/stops/123/departures", query="next=abc")
+    assert captured["status"].startswith("400")
+    result = json.loads(body)
+    assert result["error"] == "bad_request"
+    assert "next" in result["detail"]
+    mock_get_departures.assert_not_called()
+
+
+@patch("app.get_stops")
+def test_stops_400_non_numeric_radius(mock_get_stops):
+    captured, body = _call(app, "/api/v2/rest/stops", query="lat=37.7&lon=-122.4&radius=foo")
+    assert captured["status"].startswith("400")
+    result = json.loads(body)
+    assert result["error"] == "bad_request"
+    assert "radius" in result["detail"]
+    mock_get_stops.assert_not_called()
+
+
+@patch("app.get_stops")
+def test_stops_400_negative_limit(mock_get_stops):
+    captured, body = _call(app, "/api/v2/rest/stops", query="lat=37.7&lon=-122.4&limit=-5")
+    assert captured["status"].startswith("400")
+    result = json.loads(body)
+    assert result["error"] == "bad_request"
+    assert "limit" in result["detail"]
+    mock_get_stops.assert_not_called()
 
 
 @patch("proxy._upstream_get")
@@ -188,7 +231,7 @@ _FAKE_STATS = {
 @patch("app._stats_secret", "test-secret")
 @patch("stats.load_stats", return_value=_FAKE_STATS)
 def test_stats_json_200(mock_load_stats):
-    captured, body = _call(app, "/_internal/test-secret/stats.json", api_key=None)
+    captured, body = _call(app, "/_internal/stats.json", api_key=None, stats_token="test-secret")
     assert captured["status"].startswith("200")
     result = json.loads(body)
     assert "windows" in result
@@ -198,7 +241,7 @@ def test_stats_json_200(mock_load_stats):
 @patch("app._stats_secret", "test-secret")
 @patch("stats.load_stats", return_value=_FAKE_STATS)
 def test_stats_html_200(mock_load_stats):
-    captured, body = _call(app, "/_internal/test-secret/stats", api_key=None)
+    captured, body = _call(app, "/_internal/stats", api_key=None, stats_token="test-secret")
     assert captured["status"].startswith("200")
     assert "text/html" in captured["headers"].get("Content-Type", "")
     assert b"CTN Proxy Stats" in body
@@ -206,11 +249,17 @@ def test_stats_html_200(mock_load_stats):
 
 @patch("app._stats_secret", "test-secret")
 def test_stats_json_404_wrong_token():
-    captured, body = _call(app, "/_internal/wrongtoken/stats.json", api_key=None)
+    captured, body = _call(app, "/_internal/stats.json", api_key=None, stats_token="wrongtoken")
+    assert captured["status"].startswith("404")
+
+
+@patch("app._stats_secret", "test-secret")
+def test_stats_json_404_missing_token():
+    captured, body = _call(app, "/_internal/stats.json", api_key=None)
     assert captured["status"].startswith("404")
 
 
 @patch("app._stats_secret", "")
 def test_stats_json_404_no_secret():
-    captured, body = _call(app, "/_internal/anything/stats.json", api_key=None)
+    captured, body = _call(app, "/_internal/stats.json", api_key=None, stats_token="anything")
     assert captured["status"].startswith("404")

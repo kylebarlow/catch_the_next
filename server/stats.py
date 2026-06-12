@@ -1,3 +1,4 @@
+import html
 import os
 import re
 import sys
@@ -367,11 +368,16 @@ def _fmt(n):
 
 
 def _th_row(cols):
-    return "<tr>" + "".join(f"<th>{c}</th>" for c in cols) + "</tr>"
+    # Column headers can be log-derived (endpoint paths in the Top-IPs tables),
+    # so escape them — a crafted log line must not inject markup into the
+    # secret-gated admin dashboard.
+    return "<tr>" + "".join(f"<th>{html.escape(str(c))}</th>" for c in cols) + "</tr>"
 
 
 def _td_row(label, vals):
-    cells = f'<td class="lbl">{label}</td>' + "".join(f"<td>{_fmt(v)}</td>" for v in vals)
+    # `label` may be a log-derived client/endpoint string; escape it. `vals`
+    # are integers formatted by _fmt, so they're safe.
+    cells = f'<td class="lbl">{html.escape(str(label))}</td>' + "".join(f"<td>{_fmt(v)}</td>" for v in vals)
     return f"<tr>{cells}</tr>"
 
 
@@ -538,7 +544,7 @@ def render_html(stats: dict) -> str:
         parts.append(_th_row(["IP", "Total"] + ep_cols))
         for row in top:
             ep_vals = "".join(f"<td>{_fmt(row['by_endpoint'].get(ep, 0))}</td>" for ep in ep_cols)
-            parts.append(f'<tr><td class="ip">{row["ip"]}</td>'
+            parts.append(f'<tr><td class="ip">{html.escape(str(row["ip"]))}</td>'
                          f'<td>{_fmt(row["total"])}</td>{ep_vals}</tr>')
         parts.append("</table>")
 

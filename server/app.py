@@ -12,6 +12,32 @@ _stats_secret = _cfg["STATS_PATH_SECRET"]
 app = bottle.Bottle()
 
 
+def _int_param(name, default):
+    """Read a non-negative integer query param, or raise a clean 400.
+
+    `lat`/`lon`/`focus_*` are already validated and return 400s; this gives the
+    numeric siblings (`next`, `radius`, `limit`) the same treatment instead of
+    letting `int("abc")` bubble up as an unhandled 500. Upstream caps still apply
+    in proxy.py; this only rejects non-numeric/negative input.
+    """
+    raw = bottle.request.query.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except (ValueError, TypeError):
+        raise bottle.HTTPResponse(
+            body=json.dumps({"error": "bad_request", "detail": f"{name} must be an integer"}),
+            status=400, headers={"Content-Type": "application/json"},
+        )
+    if value < 0:
+        raise bottle.HTTPResponse(
+            body=json.dumps({"error": "bad_request", "detail": f"{name} must be non-negative"}),
+            status=400, headers={"Content-Type": "application/json"},
+        )
+    return value
+
+
 @app.route("/healthz")
 def healthz():
     return "ok"
@@ -36,8 +62,8 @@ def stops():
             status=400, headers={"Content-Type": "application/json"},
         )
 
-    radius = bottle.request.query.get("radius", 500)
-    limit = bottle.request.query.get("limit", 20)
+    radius = _int_param("radius", 500)
+    limit = _int_param("limit", 20)
     bottle.response.content_type = "application/json"
     return json.dumps(get_stops(lat, lon, radius, limit))
 
@@ -75,7 +101,7 @@ def geocode_route():
                 status=400, headers={"Content-Type": "application/json"},
             )
 
-    limit = bottle.request.query.get("limit", 10)
+    limit = _int_param("limit", 10)
     accept_language = bottle.request.environ.get("HTTP_ACCEPT_LANGUAGE")
     bottle.response.content_type = "application/json"
     return json.dumps(geocode(q, focus_lat, focus_lon, limit, accept_language))
@@ -85,7 +111,7 @@ def geocode_route():
 @require_auth
 @require_rate_limit
 def departures(stop_id):
-    next_seconds = bottle.request.query.get("next", 3600)
+    next_seconds = _int_param("next", 3600)
     bottle.response.content_type = "application/json"
     return json.dumps(get_departures(stop_id, next_seconds))
 
@@ -115,28 +141,46 @@ def departures_batch():
             status=400, headers={"Content-Type": "application/json"},
         )
 
-    next_seconds = bottle.request.query.get("next", 3600)
+    next_seconds = _int_param("next", 3600)
     bottle.response.content_type = "application/json"
     return json.dumps(get_departures_by_onestop_ids(onestop_ids, next_seconds))
 
 
-def _stats_check(token):
-    """Return True if the token matches the configured secret."""
+def _stats_token_from_request():
+    """Pull the stats token from a request header, never the URL path.
+
+    A secret in the path is written verbatim into the Apache access log (the
+    same log this app reads back), browser history, and any intermediary —
+    effectively logging the token in plaintext. Headers are not logged, so we
+    accept the token via X-Stats-Token or `Authorization: Bearer <token>`.
+    """
+    header = bottle.request.headers.get("X-Stats-Token")
+    if header:
+        return header
+    auth = bottle.request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[len("Bearer "):]
+    return ""
+
+
+def _stats_check():
+    """Return True if the request carries the configured stats secret."""
+    token = _stats_token_from_request()
     return bool(_stats_secret) and hmac.compare_digest(token, _stats_secret)
 
 
-@app.route("/_internal/<token>/stats.json")
-def stats_json(token):
-    if not _stats_check(token):
+@app.route("/_internal/stats.json")
+def stats_json():
+    if not _stats_check():
         raise bottle.HTTPResponse(status=404, body="Not Found")
     from stats import load_stats
     bottle.response.content_type = "application/json"
     return json.dumps(load_stats())
 
 
-@app.route("/_internal/<token>/stats")
-def stats_html(token):
-    if not _stats_check(token):
+@app.route("/_internal/stats")
+def stats_html():
+    if not _stats_check():
         raise bottle.HTTPResponse(status=404, body="Not Found")
     from stats import load_stats, render_html
     bottle.response.content_type = "text/html; charset=utf-8"

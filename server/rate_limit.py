@@ -102,7 +102,16 @@ def require_rate_limit(fn):
 
 
 def _get_client_ip():
-    xff = bottle.request.environ.get("HTTP_X_FORWARDED_FOR", "")
-    if xff:
-        return xff.split(",")[-1].strip()
+    # Use REMOTE_ADDR only — never trust a client-supplied X-Forwarded-For.
+    # On NearlyFreeSpeech CGI there is no trusted reverse proxy in front of us,
+    # so REMOTE_ADDR is the real client address and matches the access log's
+    # %h field that _parse_log_count scans. Keying on a spoofable header let
+    # an attacker rotate the value for unlimited requests, and any future CDN
+    # setting XFF would have silently disabled limiting for everyone (the log
+    # would show the proxy IP, never the forwarded value).
+    #
+    # If a trusted reverse proxy is ever introduced, parse X-Forwarded-For
+    # only when REMOTE_ADDR equals that proxy's known address, take the first
+    # (client-most) entry, and make _parse_log_count key on the same value the
+    # web server logs.
     return bottle.request.environ.get("REMOTE_ADDR", "unknown")

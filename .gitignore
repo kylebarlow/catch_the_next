@@ -5,6 +5,12 @@ deploy_to_device.sh
 server/.env
 server/deploy/push.env
 
+# Editor / backup files — may hold copies of the above secrets. Ignored here
+# (not only via a global gitignore) so the guarantee is self-contained.
+*~
+*.bak
+*.orig
+
 # Python
 server/__pycache__/
 server/**/__pycache__/
@@ -14,6 +20,7 @@ server/.pytest_cache/
 # Build output
 build/
 .gradle/
+.kotlin/
 out/
 
 # IDE

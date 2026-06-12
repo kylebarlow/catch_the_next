@@ -17,27 +17,23 @@ def _mock_request(key=None):
 @patch("auth._valid_keys", ["key-one", "key-two"])
 def test_valid_first_key():
     with patch("auth.bottle.request", _mock_request("key-one")):
-        prefix = check_auth()
-    assert prefix == "key-on"
+        assert check_auth() is True
 
 
 @patch("auth._valid_keys", ["key-one", "key-two"])
 def test_valid_second_key():
     with patch("auth.bottle.request", _mock_request("key-two")):
-        prefix = check_auth()
-    assert prefix == "key-tw"
+        assert check_auth() is True
 
 
-def test_missing_key_returns_none():
+def test_missing_key_returns_false():
     with patch("auth.bottle.request", _mock_request()):
-        prefix = check_auth()
-    assert prefix is None
+        assert check_auth() is False
 
 
-def test_wrong_key_returns_none():
+def test_wrong_key_returns_false():
     with patch("auth.bottle.request", _mock_request("bad-key")):
-        prefix = check_auth()
-    assert prefix is None
+        assert check_auth() is False
 
 
 def test_require_auth_blocks_missing_key():

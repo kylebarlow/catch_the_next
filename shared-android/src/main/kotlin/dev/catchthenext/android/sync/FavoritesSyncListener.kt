@@ -17,6 +17,15 @@ import kotlinx.coroutines.tasks.await
 
 private const val TAG = "FavSync"
 
+/**
+ * Trust boundary: the Wear data layer requires this service be `exported="true"`
+ * with a `DATA_CHANGED` intent-filter, so a malicious app already on the device
+ * could craft a matching event and feed arbitrary JSON into [onDataChanged]. That
+ * is acceptable here because the only effect is a merge into the user's transit
+ * favorites — there is no privilege escalation and no API-key access. Keep
+ * [applyRemote] side-effect-free (favorites-only) so this boundary is not widened;
+ * do not add any sensitive write path that consumes the incoming data map.
+ */
 abstract class FavoritesSyncListener : WearableListenerService() {
     protected abstract fun syncStateStore(): SyncStateStore
 
