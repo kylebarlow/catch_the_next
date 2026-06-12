@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import dev.catchthenext.android.tile.Tuning
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.Locale
@@ -31,7 +32,7 @@ class DistanceUnitStore(private val context: Context) {
     }
 
     val thresholdMetersFlow: Flow<Int> = context.settingsDataStore.data.map { prefs ->
-        prefs[thresholdMetersKey] ?: 1609
+        prefs[thresholdMetersKey] ?: Tuning.DEFAULT_THRESHOLD_METERS
     }
 
     suspend fun setUnit(unit: DistanceUnit) {

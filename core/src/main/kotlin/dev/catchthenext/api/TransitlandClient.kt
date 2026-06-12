@@ -1,7 +1,7 @@
 package dev.catchthenext.api
 
 import com.google.gson.annotations.SerializedName
-import com.google.gson.Gson
+import dev.catchthenext.json.AppJson
 import dev.catchthenext.model.Alert
 import dev.catchthenext.model.AlertActivePeriod
 import dev.catchthenext.model.AlertSeverity
@@ -34,7 +34,7 @@ class TransitlandClient(
         }
         .build()
 
-    private val gson = Gson()
+    private val gson = AppJson.gson
     private val inFlight = ConcurrentHashMap<String, CompletableFuture<Any>>()
 
     @Suppress("UNCHECKED_CAST")

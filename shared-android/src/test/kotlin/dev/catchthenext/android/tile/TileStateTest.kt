@@ -191,6 +191,38 @@ class TileStateTest {
         StopWithDepartures(stop, 0.0, deps.toList())
 
     @Test
+    fun `resolveStaleStops swaps a stale stop for its nearby match by stopId`() = runTest {
+        val stale = stop(1L, 37.770, -122.410)
+        val resolved = Stop(99L, "S1", "Stop 1", 37.770, -122.410, onestopId = "s-99")
+        val ready = TileState.Ready(
+            stops = listOf(StopWithDepartures(stale, 0.0, emptyList(), isStale = true)),
+            fetchedAt = 0L,
+        )
+
+        var nearbyQueried = false
+        val updated = resolveStaleStops(ready, listOf(stale)) { _, _ ->
+            nearbyQueried = true
+            listOf(resolved)
+        }
+
+        assertTrue(nearbyQueried, "Nearby search should run for a stale stop")
+        assertEquals(listOf(resolved), updated, "Stale stop should be replaced by its matching nearby stop")
+    }
+
+    @Test
+    fun `resolveStaleStops returns null when nothing is stale`() = runTest {
+        val fresh = stop(1L, 37.770, -122.410)
+        val ready = TileState.Ready(
+            stops = listOf(StopWithDepartures(fresh, 0.0, emptyList(), isStale = false)),
+            fetchedAt = 0L,
+        )
+        var nearbyQueried = false
+        val updated = resolveStaleStops(ready, listOf(fresh)) { _, _ -> nearbyQueried = true; emptyList() }
+        assertEquals(null, updated)
+        assertFalse(nearbyQueried, "No nearby search when nothing is stale")
+    }
+
+    @Test
     fun `groupDepartures groups same route into one entry`() {
         val s = stop(1L, 37.770, -122.410)
         val groups = groupDepartures(listOf(swd(s,
@@ -270,66 +302,6 @@ class TileStateTest {
         )
 
     @Test
-    fun `makeFetchNetworkDepartures returns cache when fresh`() = runTest {
-        val now = System.currentTimeMillis()
-        val freshStop = cachedStopDeps(1L, now - 30_000, 5L, 10L)
-        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshStop))
-
-        var networkCalled = false
-        val fetch = makeFetchNetworkDepartures(
-            getDepartures = { stopId -> networkCalled = true; StopDepartures(stopId, emptyList()) },
-            cache = cache,
-            forceFresh = false,
-        )
-
-        val result = fetch(1L)
-        assertFalse(networkCalled, "Network should not be called for fresh cache")
-        assertEquals(2, result.departures.size)
-        assertEquals(freshStop.fetchedAt, result.fetchedAt)
-    }
-
-    @Test
-    fun `makeFetchNetworkDepartures hits network when cache is stale`() = runTest {
-        val now = System.currentTimeMillis()
-        val staleStop = cachedStopDeps(1L, now - 90_000, 5L)
-        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(staleStop))
-
-        var networkCalled = false
-        val fetch = makeFetchNetworkDepartures(
-            getDepartures = { stopId ->
-                networkCalled = true
-                StopDepartures(stopId, listOf(Departure(stopId, "10:00", 10L, null, null, "10:00", 10L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
-            },
-            cache = cache,
-            forceFresh = false,
-        )
-
-        val result = fetch(1L)
-        assertTrue(networkCalled, "Network should be called for stale cache")
-        assertEquals(1, result.departures.size)
-    }
-
-    @Test
-    fun `makeFetchNetworkDepartures bypasses fresh cache when forceFresh`() = runTest {
-        val now = System.currentTimeMillis()
-        val freshStop = cachedStopDeps(1L, now - 10_000, 5L)
-        val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = listOf(freshStop))
-
-        var networkCalled = false
-        val fetch = makeFetchNetworkDepartures(
-            getDepartures = { stopId ->
-                networkCalled = true
-                StopDepartures(stopId, listOf(Departure(stopId, "10:00", 5L, null, null, "10:00", 5L, DepartureTimeSource.SCHEDULED, "14", "Mission 14", "Ferry Plaza")))
-            },
-            cache = cache,
-            forceFresh = true,
-        )
-
-        fetch(1L)
-        assertTrue(networkCalled, "Network should be called when forceFresh=true even with fresh cache")
-    }
-
-    @Test
     fun `mixed cache - only stale stop ids sent in batch`() = runTest {
         val now = System.currentTimeMillis()
         val stop1 = stop(1L, 37.770, -122.410)
@@ -381,22 +353,24 @@ class TileStateTest {
     }
 
     @Test
-    fun `cache retains timeSource through makeFetchNetworkDepartures`() = runTest {
-        val now = System.currentTimeMillis()
+    fun `cache retains timeSource through makeFetchNetworkDeparturesBatch`() = runTest {
         val cache = CachedTileData(lat = null, lon = null, nearbyDepartures = emptyList())
 
-        val fetch = makeFetchNetworkDepartures(
-            getDepartures = { stopId ->
-                StopDepartures(stopId, listOf(
-                    Departure(stopId, "10:00", 10L, "10:03", 13L, "10:03", 13L, DepartureTimeSource.LIVE, "14", "", "Ferry Plaza"),
-                    Departure(stopId, "10:15", 25L, null, null, "10:15", 25L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
-                ))
+        val fetch = makeFetchNetworkDeparturesBatch(
+            getDeparturesBatch = { stopIds ->
+                stopIds.associateWith { _ ->
+                    StopDepartures(0L, listOf(
+                        Departure(0L, "10:00", 10L, "10:03", 13L, "10:03", 13L, DepartureTimeSource.LIVE, "14", "", "Ferry Plaza"),
+                        Departure(0L, "10:15", 25L, null, null, "10:15", 25L, DepartureTimeSource.SCHEDULED, "14", "", "Ferry Plaza"),
+                    ))
+                }
             },
             cache = cache,
+            stops = listOf(stop(1L, 37.77, -122.41)),
             forceFresh = true,
         )
 
-        val result = fetch(1L)
+        val result = fetch(listOf(1L))[1L]!!
         assertEquals(2, result.departures.size)
         assertEquals(DepartureTimeSource.LIVE, result.departures[0].timeSource)
         assertEquals(DepartureTimeSource.SCHEDULED, result.departures[1].timeSource)

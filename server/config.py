@@ -27,6 +27,18 @@ def load_config():
         "FIVE_ELEVEN_RT_MAX_STALE": int(os.environ.get("FIVE_ELEVEN_RT_MAX_STALE", "180")),
         "FIVE_ELEVEN_STATIC_TTL": int(os.environ.get("FIVE_ELEVEN_STATIC_TTL", str(86400 * 7))),
         "FIVE_ELEVEN_ENABLED": os.environ.get("FIVE_ELEVEN_ENABLED", "1") not in ("0", "false", "False", ""),
+        # ── proxy.py tuning (env-overridable; defaults = historical literals) ──
+        "RESPONSE_CACHE_TTL": int(os.environ.get("RESPONSE_CACHE_TTL", "50")),
+        "GEOCODE_CACHE_TTL": int(os.environ.get("GEOCODE_CACHE_TTL", "3600")),
+        "STOP_ID_CACHE_TTL": int(os.environ.get("STOP_ID_CACHE_TTL", str(86400 * 180))),
+        # Batch cap: the Kotlin client sends ≤4 (Tuning.MAX_BATCH_STOPS); 6 is
+        # intentional server-side headroom. Keep the two in sync — see
+        # shared-android Tuning.kt.
+        "BATCH_MAX_STOPS": int(os.environ.get("BATCH_MAX_STOPS", "6")),
+        "UPSTREAM_STOPS_LIMIT": int(os.environ.get("UPSTREAM_STOPS_LIMIT", "100")),
+        "STOPS_GRID_DEG": float(os.environ.get("STOPS_GRID_DEG", "0.002")),
+        "STOPS_GRID_SLACK_M": int(os.environ.get("STOPS_GRID_SLACK_M", "300")),
+        "STOPS_GRID_CACHE_TTL": int(os.environ.get("STOPS_GRID_CACHE_TTL", str(6 * 3600))),
     }
 
     missing = []

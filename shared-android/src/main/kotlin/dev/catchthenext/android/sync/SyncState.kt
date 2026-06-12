@@ -1,7 +1,7 @@
 package dev.catchthenext.android.sync
 
-import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import dev.catchthenext.json.AppJson
 import dev.catchthenext.model.Stop
 
 data class SyncState(
@@ -12,7 +12,7 @@ data class SyncState(
     fun toJson(): String = gson.toJson(this)
 
     companion object {
-        private val gson = Gson()
+        private val gson = AppJson.gson
 
         fun fromJson(json: String): SyncState? =
             runCatching { gson.fromJson(json, SyncState::class.java) }.getOrNull()

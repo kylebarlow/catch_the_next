@@ -4,8 +4,8 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import dev.catchthenext.json.AppJson
 import dev.catchthenext.model.Stop
 import dev.catchthenext.storage.FavoritesManager
 import kotlinx.coroutines.flow.Flow
@@ -16,7 +16,7 @@ import kotlinx.coroutines.runBlocking
 private val Context.dataStore by preferencesDataStore(name = "favorites")
 
 class AndroidFavoritesManager(private val context: Context) : FavoritesManager {
-    private val gson = Gson()
+    private val gson = AppJson.gson
     private val FAVORITES_KEY = stringPreferencesKey("favorites_list")
 
     override fun favoritesFlow(): Flow<List<Stop>> = context.dataStore.data.map { prefs ->

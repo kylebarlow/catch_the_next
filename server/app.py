@@ -5,37 +5,19 @@ from auth import require_auth
 from rate_limit import require_rate_limit
 from proxy import get_stops, get_departures, get_departures_by_onestop_ids, geocode, _BATCH_MAX_STOPS
 from config import load_config
+from validation import (
+    validated,
+    optional_int,
+    require_str,
+    require_float_pair,
+    optional_float_pair,
+    require_csv,
+)
 
 _cfg = load_config()
 _stats_secret = _cfg["STATS_PATH_SECRET"]
 
 app = bottle.Bottle()
-
-
-def _int_param(name, default):
-    """Read a non-negative integer query param, or raise a clean 400.
-
-    `lat`/`lon`/`focus_*` are already validated and return 400s; this gives the
-    numeric siblings (`next`, `radius`, `limit`) the same treatment instead of
-    letting `int("abc")` bubble up as an unhandled 500. Upstream caps still apply
-    in proxy.py; this only rejects non-numeric/negative input.
-    """
-    raw = bottle.request.query.get(name)
-    if raw is None or raw == "":
-        return default
-    try:
-        value = int(raw)
-    except (ValueError, TypeError):
-        raise bottle.HTTPResponse(
-            body=json.dumps({"error": "bad_request", "detail": f"{name} must be an integer"}),
-            status=400, headers={"Content-Type": "application/json"},
-        )
-    if value < 0:
-        raise bottle.HTTPResponse(
-            body=json.dumps({"error": "bad_request", "detail": f"{name} must be non-negative"}),
-            status=400, headers={"Content-Type": "application/json"},
-        )
-    return value
 
 
 @app.route("/healthz")
@@ -46,24 +28,11 @@ def healthz():
 @app.route("/api/v2/rest/stops")
 @require_auth
 @require_rate_limit
+@validated
 def stops():
-    lat = bottle.request.query.get("lat")
-    lon = bottle.request.query.get("lon")
-    if lat is None or lon is None:
-        raise bottle.HTTPResponse(
-            body='{"error":"bad_request","detail":"lat and lon are required"}',
-            status=400, headers={"Content-Type": "application/json"},
-        )
-    try:
-        lat, lon = float(lat), float(lon)
-    except ValueError:
-        raise bottle.HTTPResponse(
-            body='{"error":"bad_request","detail":"lat and lon must be numeric"}',
-            status=400, headers={"Content-Type": "application/json"},
-        )
-
-    radius = _int_param("radius", 500)
-    limit = _int_param("limit", 20)
+    lat, lon = require_float_pair("lat", "lon")
+    radius = optional_int("radius", 500)
+    limit = optional_int("limit", 20)
     bottle.response.content_type = "application/json"
     return json.dumps(get_stops(lat, lon, radius, limit))
 
@@ -71,37 +40,11 @@ def stops():
 @app.route("/api/v2/rest/geocode")
 @require_auth
 @require_rate_limit
+@validated
 def geocode_route():
-    q = bottle.request.query.get("q", "").strip()
-    if not q:
-        raise bottle.HTTPResponse(
-            body='{"error":"bad_request","detail":"q is required"}',
-            status=400, headers={"Content-Type": "application/json"},
-        )
-    if len(q) > 200:
-        raise bottle.HTTPResponse(
-            body='{"error":"bad_request","detail":"q is too long"}',
-            status=400, headers={"Content-Type": "application/json"},
-        )
-
-    focus_lat_str = bottle.request.query.get("focus_lat")
-    focus_lon_str = bottle.request.query.get("focus_lon")
-    if (focus_lat_str is None) != (focus_lon_str is None):
-        raise bottle.HTTPResponse(
-            body='{"error":"bad_request","detail":"focus_lat and focus_lon must be provided together"}',
-            status=400, headers={"Content-Type": "application/json"},
-        )
-    focus_lat = focus_lon = None
-    if focus_lat_str is not None:
-        try:
-            focus_lat, focus_lon = float(focus_lat_str), float(focus_lon_str)
-        except ValueError:
-            raise bottle.HTTPResponse(
-                body='{"error":"bad_request","detail":"focus_lat and focus_lon must be numeric"}',
-                status=400, headers={"Content-Type": "application/json"},
-            )
-
-    limit = _int_param("limit", 10)
+    q = require_str("q", max_len=200)
+    focus_lat, focus_lon = optional_float_pair("focus_lat", "focus_lon")
+    limit = optional_int("limit", 10)
     accept_language = bottle.request.environ.get("HTTP_ACCEPT_LANGUAGE")
     bottle.response.content_type = "application/json"
     return json.dumps(geocode(q, focus_lat, focus_lon, limit, accept_language))
@@ -110,8 +53,9 @@ def geocode_route():
 @app.route("/api/v2/rest/stops/<stop_id:int>/departures")
 @require_auth
 @require_rate_limit
+@validated
 def departures(stop_id):
-    next_seconds = _int_param("next", 3600)
+    next_seconds = optional_int("next", 3600)
     bottle.response.content_type = "application/json"
     return json.dumps(get_departures(stop_id, next_seconds))
 
@@ -119,29 +63,10 @@ def departures(stop_id):
 @app.route("/api/v2/rest/departures")
 @require_auth
 @require_rate_limit
+@validated
 def departures_batch():
-    onestop_ids_param = bottle.request.query.get("onestop_ids")
-    if not onestop_ids_param:
-        raise bottle.HTTPResponse(
-            body='{"error":"bad_request","detail":"onestop_ids is required"}',
-            status=400, headers={"Content-Type": "application/json"},
-        )
-
-    onestop_ids = [s.strip() for s in onestop_ids_param.split(",") if s.strip()]
-
-    if len(onestop_ids) == 0:
-        raise bottle.HTTPResponse(
-            body='{"error":"bad_request","detail":"onestop_ids is required"}',
-            status=400, headers={"Content-Type": "application/json"},
-        )
-
-    if len(onestop_ids) > _BATCH_MAX_STOPS:
-        raise bottle.HTTPResponse(
-            body='{"error":"bad_request","detail":"too many onestop_ids"}',
-            status=400, headers={"Content-Type": "application/json"},
-        )
-
-    next_seconds = _int_param("next", 3600)
+    onestop_ids = require_csv("onestop_ids", _BATCH_MAX_STOPS, "too many onestop_ids")
+    next_seconds = optional_int("next", 3600)
     bottle.response.content_type = "application/json"
     return json.dumps(get_departures_by_onestop_ids(onestop_ids, next_seconds))
 

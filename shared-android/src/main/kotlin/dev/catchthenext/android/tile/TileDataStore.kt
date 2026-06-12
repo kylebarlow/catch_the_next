@@ -5,15 +5,15 @@ import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import dev.catchthenext.json.AppJson
 import dev.catchthenext.model.Alert
 import kotlinx.coroutines.flow.first
 
 private val Context.tileDataStore by preferencesDataStore(name = "tile_cache")
 
 class TileDataStore(private val context: Context) {
-    private val gson = Gson()
+    private val gson = AppJson.gson
 
     object Keys {
         val lat = doublePreferencesKey("cached_lat")

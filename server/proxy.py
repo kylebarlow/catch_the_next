@@ -3,7 +3,6 @@ import socket
 import sys
 import threading
 import time
-import zlib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import bottle
 import cache
 import counters
+import routing
 from config import load_config
 from gtfs_util import alert_periods_active, haversine_meters as _haversine_meters
 
@@ -37,62 +37,51 @@ _NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
 _nominatim_lock = threading.Lock()
 _nominatim_last_call = 0.0
 
+# Tuning lives in config.load_config() (env-overridable); these module-level
+# names are kept so call sites and `from proxy import _BATCH_MAX_STOPS` are
+# unchanged. See config.py for the per-constant rationale.
+#
 # Response-cache TTL (seconds) used for departure/stop query results.
-_RESPONSE_CACHE_TTL = 50
+_RESPONSE_CACHE_TTL = _cfg["RESPONSE_CACHE_TTL"]
 # Geocode results change rarely; 1h is safe.
-_GEOCODE_CACHE_TTL = 3600
+_GEOCODE_CACHE_TTL = _cfg["GEOCODE_CACHE_TTL"]
 # _resolve_stop_info records only classify a stop as Bay-Area-or-not and supply
 # its feed/stop_id; the TL departures call is now keyed by onestop_id directly,
 # so integer-id staleness is irrelevant and the record can live a long time.
-_STOP_ID_CACHE_TTL = 86400 * 180  # 180 days
+_STOP_ID_CACHE_TTL = _cfg["STOP_ID_CACHE_TTL"]  # 180 days
 
-_BATCH_MAX_STOPS = 6
+# Client sends ≤4 (Kotlin Tuning.MAX_BATCH_STOPS); 6 is intentional headroom.
+_BATCH_MAX_STOPS = _cfg["BATCH_MAX_STOPS"]
 
 # ── Synthetic onestop_id helpers ────────────────────────────────────────────
-# Stops discovered via the local 511 static DB carry a server-synthesized
-# onestop_id "511:<feed_onestop_id>:<stop_id>". The Kotlin client treats it as
-# an opaque string, so it round-trips with zero client changes. They have no
-# Transitland identity — they always serve from the local 511 path.
+# Classification logic lives in routing.py (pure, predicates injected). These
+# thin wrappers bind the proxy-side predicate (`_bay_area_feed`, which late-binds
+# the optional gtfs511 module) so existing call sites and the `proxy.gtfs511`
+# test monkeypatch seam keep working.
 #
 # CAVEAT: disabling 511 after synthetic ids exist is a one-way door — those
 # favorites would go dark (empty departures) since they can't be served by TL.
-_SYNTHETIC_PREFIX = "511:"
+_SYNTHETIC_PREFIX = routing.SYNTHETIC_PREFIX
+
+
+def _bay_area_feed(feed_id) -> bool:
+    """Recognize a Bay Area 511 feed, late-binding the optional gtfs511 module.
+
+    Returns False when 511 is disabled, so synthetic ids fall through to "none"
+    and feeds resolve to the Transitland path — matching pre-511 behavior."""
+    return bool(_GTFS511_IMPORTED and gtfs511.is_bay_area_feed(feed_id))
 
 
 def _parse_synthetic_onestop_id(oid):
-    """Return (feed_id, stop_id) for a synthetic id, else None.
-
-    Requires 3 non-empty parts and a recognized Bay Area feed. ':' inside the
-    stop_id is preserved (split with maxsplit=2).
-    """
-    if not isinstance(oid, str) or not oid.startswith(_SYNTHETIC_PREFIX):
-        return None
-    parts = oid.split(":", 2)
-    if len(parts) != 3:
-        return None
-    _, feed_id, stop_id = parts
-    if not feed_id or not stop_id:
-        return None
-    if not (_GTFS511_IMPORTED and gtfs511.is_bay_area_feed(feed_id)):
-        return None
-    return feed_id, stop_id
+    return routing.parse_synthetic_onestop_id(oid, _bay_area_feed)
 
 
 def _make_synthetic_onestop_id(feed_id, stop_id):
-    """Build a synthetic id, or None if stop_id is empty or contains ',' (the
-    client's batch separator)."""
-    if not stop_id or "," in str(stop_id):
-        return None
-    return f"{_SYNTHETIC_PREFIX}{feed_id}:{stop_id}"
+    return routing.make_synthetic_onestop_id(feed_id, stop_id)
 
 
 def _synthetic_integer_id(onestop_id: str) -> int:
-    """Stable negative integer id for a synthetic onestop_id.
-
-    crc32 (not hash(), which is salted per-process) keeps it stable across
-    processes; negative so it can't collide with Transitland's positive ids.
-    """
-    return -((zlib.crc32(onestop_id.encode()) % 0x7FFFFFFF) + 1)
+    return routing.synthetic_integer_id(onestop_id)
 
 
 def _http_get_json(url: str, params: dict | None = None,
@@ -159,7 +148,7 @@ def _nominatim_throttle():
 # Upstream sorts by stop_name, not distance — so a low limit can truncate the
 # closest stops if many alphabetically-earlier stops are within radius. Always
 # fetch a wide candidate set, then sort by distance and trim to `limit`.
-_UPSTREAM_STOPS_LIMIT = 100
+_UPSTREAM_STOPS_LIMIT = _cfg["UPSTREAM_STOPS_LIMIT"]
 
 
 def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=None):
@@ -210,9 +199,9 @@ def geocode(query, focus_lat=None, focus_lon=None, limit=10, accept_language=Non
 # Grid-snapped caching for the Transitland get_stops path. We round the query
 # coords to a coarse grid cell and fetch the cell center + slack so nearby
 # requests share an upstream call.
-_STOPS_GRID_DEG = 0.002          # ~222m
-_STOPS_GRID_SLACK_M = 300
-_STOPS_GRID_CACHE_TTL = 6 * 3600
+_STOPS_GRID_DEG = _cfg["STOPS_GRID_DEG"]          # ~222m
+_STOPS_GRID_SLACK_M = _cfg["STOPS_GRID_SLACK_M"]
+_STOPS_GRID_CACHE_TTL = _cfg["STOPS_GRID_CACHE_TTL"]
 
 
 def _shape_local_stop(row) -> dict | None:
@@ -542,55 +531,42 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
     if cached is not None:
         return cached
 
-    # Classification pass (sequential, before the pool): build one plan per oid.
-    #   ("local_always", feed_id, stop_id) — synthetic id, always served locally
-    #   ("local_or_tl", feed_id, stop_id)  — Bay Area TL stop, local if RT fresh
-    #   ("tl", oid)                        — non-Bay-Area, Transitland only
-    #   ("none", oid)                      — unresolvable, empty result
-    plans = {}
-    need_511 = False
-    for oid in onestop_ids:
-        syn = _parse_synthetic_onestop_id(oid)
-        if syn is not None:
-            plans[oid] = ("local_always", syn[0], syn[1])
-            need_511 = True
-            continue
-        info = _resolve_stop_info(oid)
-        if info is None:
-            plans[oid] = ("none", oid)
-        elif _GTFS511_IMPORTED and gtfs511.is_bay_area_feed(info.get("feed_onestop_id")):
-            plans[oid] = ("local_or_tl", info["feed_onestop_id"], info["stop_id"])
-            need_511 = True
-        else:
-            plans[oid] = ("tl", oid)
+    # Classification pass (sequential, before the pool): routing.py decides
+    # *which* source per oid; the staleness/fallback *execution* stays below.
+    plans = {
+        oid: routing.classify_departure_source(
+            oid,
+            resolve_stop_info=_resolve_stop_info,
+            is_bay_area_feed=_bay_area_feed,
+        )
+        for oid in onestop_ids
+    }
+    need_511 = any(plan.needs_511 for plan in plans.values())
 
     state = _refresh_511_state() if need_511 else None
 
     def _fetch_one(oid: str):
         plan = plans[oid]
-        kind = plan[0]
-        if kind == "none":
+        if plan.kind == "none":
             return {"onestop_id": oid, "departures": [], "alerts": []}
-        if kind == "local_always":
-            _, feed_id, stop_id = plan
+        if plan.kind == "local_always":
             # Synthetic ids have no TL identity — serve locally regardless of RT
             # staleness (schedule data degrades gracefully). Never call TL.
             if state and state["static_present"]:
                 try:
-                    return _local_departures(oid, feed_id, stop_id, next_seconds)
+                    return _local_departures(oid, plan.feed_id, plan.stop_id, next_seconds)
                 except Exception as e:  # noqa: BLE001
                     print(f"gtfs511 local_always lookup for {oid}: {e}", file=sys.stderr)
             return {"onestop_id": oid, "departures": [], "alerts": []}
-        if kind == "local_or_tl":
-            _, feed_id, stop_id = plan
+        if plan.kind == "local_or_tl":
             if state and state["static_present"] and state["rt_fresh"]:
                 try:
-                    return _local_departures(oid, feed_id, stop_id, next_seconds)
+                    return _local_departures(oid, plan.feed_id, plan.stop_id, next_seconds)
                 except Exception as e:  # noqa: BLE001
                     print(f"gtfs511 fallback for {oid}: {e}", file=sys.stderr)
             # RT missing / stale / static missing / lookup failed → Transitland.
             return _tl_departures(oid, next_seconds)
-        # kind == "tl"
+        # plan.kind == "tl"
         return _tl_departures(oid, next_seconds)
 
     with ThreadPoolExecutor(max_workers=max(len(onestop_ids), 1)) as pool:

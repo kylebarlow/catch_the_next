@@ -7,6 +7,7 @@ import dev.catchthenext.model.Stop
 import dev.catchthenext.storage.FavoritesManager
 import dev.catchthenext.android.location.CurrentLocationProvider
 import dev.catchthenext.android.location.LatLon
+import dev.catchthenext.android.tile.Tuning
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,11 +39,11 @@ class AddStopViewModel(
                 _ui.value = AddStopUi.Error("Could not get location")
                 return@launch
             }
-            loadStopsAt(latLon, radiusMeters = 600)
+            loadStopsAt(latLon, radiusMeters = Tuning.ADD_STOP_AUTO_RADIUS_M)
         }
     }
 
-    fun loadFor(latLon: LatLon, radiusMeters: Int = 1500) {
+    fun loadFor(latLon: LatLon, radiusMeters: Int = Tuning.ADD_STOP_SEARCH_RADIUS_M) {
         _ui.value = AddStopUi.Locating
         viewModelScope.launch(ioDispatcher) {
             loadStopsAt(latLon, radiusMeters)

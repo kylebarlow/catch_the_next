@@ -4,8 +4,8 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import dev.catchthenext.json.AppJson
 import dev.catchthenext.model.FeedAttribution
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 private val Context.attributionDataStore by preferencesDataStore(name = "attributions")
 
 class AttributionStore(private val context: Context) {
-    private val gson = Gson()
+    private val gson = AppJson.gson
     private val feedsKey = stringPreferencesKey("known_feeds")
 
     val attributionsFlow: Flow<Set<FeedAttribution>> = context.attributionDataStore.data.map { prefs ->

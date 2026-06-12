@@ -14,9 +14,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
-internal const val CACHE_TTL_MS = 60_000L
-internal const val MAX_BATCH_STOPS = 4
-
 data class CachedDeparture(
     val routeShortName: String,
     val headsign: String,
@@ -68,7 +65,7 @@ suspend fun updateNearbyStopsDepartures(
     thresholdMeters: Int,
     fetchDeparturesBatch: suspend (stopIds: List<Long>) -> Map<Long, CachedStopFetch>,
     persistDepartures: suspend (List<StopWithDepartures>) -> Unit = {},
-    maxStops: Int = 4,
+    maxStops: Int = Tuning.MAX_BATCH_STOPS,
 ): TileState {
     val inRange = favorites.withinMeters(lat, lon, thresholdMeters).take(maxStops)
     val selected: List<Pair<Stop, Double>> = if (inRange.isNotEmpty()) {
@@ -148,7 +145,7 @@ suspend fun computeTileState(
     favorites: List<Stop>,
     location: LatLon?,
     hasPermission: Boolean,
-    thresholdMeters: Int = 1609,
+    thresholdMeters: Int = Tuning.DEFAULT_THRESHOLD_METERS,
     fetchDeparturesBatch: suspend (stopIds: List<Long>) -> Map<Long, CachedStopFetch>,
     persistDepartures: suspend (List<StopWithDepartures>) -> Unit = {},
 ): TileState {
@@ -204,25 +201,6 @@ private fun StopDepartures.toFetch(fetchTime: Long): CachedStopFetch = CachedSto
     fetchedAt = fetchTime,
 )
 
-/** Network fetch + per-stop 60 s cache check + error fallback for a single stop. */
-fun makeFetchNetworkDepartures(
-    getDepartures: suspend (Long) -> StopDepartures,
-    cache: CachedTileData,
-    forceFresh: Boolean = false,
-): suspend (Long) -> CachedStopFetch = { stopId ->
-    val now = System.currentTimeMillis()
-    val cached = cache.cachedFor(stopId)
-    if (!forceFresh && cached != null && now - cached.fetchedAt < CACHE_TTL_MS) {
-        cached.toFetch()
-    } else {
-        runCatching {
-            getDepartures(stopId).toFetch(System.currentTimeMillis())
-        }.getOrElse { e ->
-            if (cached != null && cached.departures.isNotEmpty()) cached.toFetch() else throw e
-        }
-    }
-}
-
 /** Batch-aware network fetch + per-stop 60 s cache check + error fallback. */
 fun makeFetchNetworkDeparturesBatch(
     getDeparturesBatch: suspend (List<String>) -> Map<String, StopDepartures>,
@@ -239,7 +217,7 @@ fun makeFetchNetworkDeparturesBatch(
         val staleStopIds = mutableListOf<Long>()
         for (stopId in stopIds) {
             val cached = cache.cachedFor(stopId)
-            if (!forceFresh && cached != null && now - cached.fetchedAt < CACHE_TTL_MS) {
+            if (!forceFresh && cached != null && now - cached.fetchedAt < Tuning.CACHE_TTL_MS) {
                 result[stopId] = cached.toFetch()
             } else {
                 staleStopIds.add(stopId)

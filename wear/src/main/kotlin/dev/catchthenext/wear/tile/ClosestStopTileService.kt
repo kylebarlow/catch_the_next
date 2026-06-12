@@ -1,9 +1,5 @@
 package dev.catchthenext.wear.tile
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.util.Log
-import androidx.core.content.ContextCompat
 import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.ColorBuilders
 import androidx.wear.protolayout.DeviceParametersBuilders.DeviceParameters
@@ -21,18 +17,15 @@ import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import com.google.android.horologist.annotations.ExperimentalHorologistApi
 import com.google.android.horologist.tiles.SuspendingTileService
-import dev.catchthenext.android.location.LatLon
-import dev.catchthenext.android.location.LocationProvider
 import dev.catchthenext.android.location.haversineMeters
-import dev.catchthenext.android.storage.DistanceUnitStore
 import dev.catchthenext.android.tile.CachedTileData
 import dev.catchthenext.android.tile.GroupedDeparture
 import dev.catchthenext.android.tile.StopWithDepartures
 import dev.catchthenext.android.tile.TileDataStore
 import dev.catchthenext.android.tile.TileState
-import dev.catchthenext.android.tile.computeTileState
+import dev.catchthenext.android.tile.Tuning
+import dev.catchthenext.android.tile.departuresPipeline
 import dev.catchthenext.android.tile.groupDepartures
-import dev.catchthenext.android.tile.makeFetchNetworkDeparturesBatch
 import dev.catchthenext.android.tile.timeLabel
 import dev.catchthenext.android.tile.updatedAtLabel
 import dev.catchthenext.model.Stop
@@ -41,12 +34,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-private const val MAX_TILE_GROUPS = 3
-private const val REFRESH_THRESHOLD_MS = 30_000L
 
 @OptIn(ExperimentalHorologistApi::class)
 class ClosestStopTileService : SuspendingTileService() {
@@ -70,7 +59,7 @@ class ClosestStopTileService : SuspendingTileService() {
                 // Cold start: no cached data, block on full fetch
                 doFetchState(dataStore)
             } else {
-                val isStale = cache.nearbyDepartures.any { now - it.fetchedAt > REFRESH_THRESHOLD_MS }
+                val isStale = cache.nearbyDepartures.any { now - it.fetchedAt > Tuning.TILE_REFRESH_THRESHOLD_MS }
                 val favorites = WearGraph.favoritesManager(this@ClosestStopTileService).getFavorites()
                 val cachedState = buildStateFromCache(cache, favorites, cache.lat, cache.lon)
 
@@ -88,7 +77,7 @@ class ClosestStopTileService : SuspendingTileService() {
         }
 
         return TileBuilders.Tile.Builder()
-            .setFreshnessIntervalMillis(60_000L)
+            .setFreshnessIntervalMillis(Tuning.TILE_FRESHNESS_INTERVAL_MS)
             .setTileTimeline(
                 TimelineBuilders.Timeline.Builder()
                     .addTimelineEntry(
@@ -105,37 +94,13 @@ class ClosestStopTileService : SuspendingTileService() {
             .build()
     }
 
-    private suspend fun doFetchState(dataStore: TileDataStore): TileState {
-        val client = WearGraph.transitlandClient()
-        val locationProvider = LocationProvider(this)
-        val cache = dataStore.read()
-        val favoritesManager = WearGraph.favoritesManager(this)
-        val favorites = favoritesManager.getFavorites()
-
-        val hasPerm = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-
-        val freshLocation = if (hasPerm) locationProvider.currentLocation() else null
-        if (freshLocation != null) dataStore.updateLocation(freshLocation.lat, freshLocation.lon)
-
-        val lat = freshLocation?.lat ?: cache.lat
-        val lon = freshLocation?.lon ?: cache.lon
-        val location = if (lat != null && lon != null) LatLon(lat, lon) else null
-        val threshold = DistanceUnitStore(this).thresholdMetersFlow.first()
-
-        Log.d("Departures", "doFetchState favorites=${favorites.size} hasPerm=$hasPerm loc=${location != null}")
-        return computeTileState(
-            favorites = favorites,
-            location = location,
-            hasPermission = hasPerm,
-            thresholdMeters = threshold,
-            fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
-                { client.getDeparturesBatch(it) }, cache, favorites
-            ),
-            persistDepartures = { stops -> dataStore.updateNearbyDepartures(stops) },
-        )
-    }
+    private suspend fun doFetchState(dataStore: TileDataStore): TileState =
+        departuresPipeline(
+            this,
+            WearGraph.transitlandClient(),
+            WearGraph.favoritesManager(this),
+            dataStore,
+        ).computeState(forceFresh = false)
 
     private fun buildStateFromCache(
         cache: CachedTileData,
@@ -208,7 +173,7 @@ class ClosestStopTileService : SuspendingTileService() {
     }
 
     private fun readyLayout(state: TileState.Ready, deviceParams: DeviceParameters): LayoutElement {
-        val groups = groupDepartures(state.stops).take(MAX_TILE_GROUPS)
+        val groups = groupDepartures(state.stops).take(Tuning.TILE_MAX_GROUPS)
 
         val col = LayoutElementBuilders.Column.Builder()
             .setWidth(DimensionBuilders.expand())

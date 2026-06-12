@@ -11,15 +11,18 @@ import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material.Card
 import androidx.wear.compose.material.CardDefaults
 import androidx.wear.compose.material.Text
+import dev.catchthenext.android.ui.AlertEmphasis
+import dev.catchthenext.android.ui.display
+import dev.catchthenext.android.ui.emphasis
 import dev.catchthenext.model.Alert
-import dev.catchthenext.model.AlertSeverity
 
 @Composable
 internal fun AlertItem(alert: Alert, maxLines: Int = Int.MAX_VALUE) {
-    val bgColor = when (alert.severityLevel) {
-        AlertSeverity.SEVERE, AlertSeverity.WARNING -> Color(0xFF4A3000)
-        else -> Color(0xFF2A2A2A)
+    val bgColor = when (alert.emphasis()) {
+        AlertEmphasis.CRITICAL, AlertEmphasis.ELEVATED -> Color(0xFF4A3000)
+        AlertEmphasis.NORMAL -> Color(0xFF2A2A2A)
     }
+    val display = alert.display()
     Card(
         onClick = {},
         modifier = Modifier.fillMaxWidth(),
@@ -27,11 +30,10 @@ internal fun AlertItem(alert: Alert, maxLines: Int = Int.MAX_VALUE) {
     ) {
         Column(modifier = Modifier.padding(4.dp)) {
             Text(
-                text = alert.headerText.orEmpty(),
+                text = display.header,
                 fontWeight = FontWeight.Bold,
             )
-            val desc = alert.descriptionText
-            if (!desc.isNullOrBlank()) {
+            display.description?.let { desc ->
                 Text(text = desc, maxLines = maxLines)
             }
         }

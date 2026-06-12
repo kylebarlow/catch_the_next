@@ -1,144 +1,43 @@
 # Future refactor candidates
 
-Findings from a whole-codebase simplification review (June 2026) that were real but
-too large or too behavior-affecting to apply in a cleanup pass. Each entry has enough
-context to pick up cold. Small fixes from the same review (shared `server/gtfs_util.py`,
-TileState fetch helpers, `DetailsUi.Loaded.feedNames()`, Gson singleton in SyncState,
-cli type-mismatch repair) were already applied.
+The June 2026 whole-codebase simplification review produced a 2-track refactor plan
+(`refactor_implement.md`). All of its phases have landed except the one below, which is
+gated. Completed phases — shared ViewModel wiring (`SharedViewModels.kt`), `CommonGraph`
+DI base, the shared `DeparturesPipeline` (incl. tile stale-resolution), `Tuning.kt` +
+server `config.py` constants, shared `AlertPresentation` logic, the shared `AppJson` Gson
+singleton, and the server `validation.py` / `routing.py` modules — are now in the code and
+need no further tracking.
 
-## 1. Deduplicate phone/wear ViewModel factories (~100 lines each)
+## kotlinx.serialization migration — GATED, defer until the current refactor has soaked
 
-**Where:** `phone/src/main/kotlin/dev/catchthenext/phone/PhoneViewModelFactory.kt:38-172`
-and `wear/src/main/kotlin/dev/catchthenext/wear/MainActivity.kt:149-276`.
+The shared-Gson step already landed (`core/.../json/AppJson.kt`, one instance reused at all
+seven serialization sites). What remains is the larger swap to kotlinx.serialization, which
+removes ~120 lines of DTO boilerplate and the reflection cost that matters for wear startup.
+It is gated because phone/wear version skew means sync payloads must stay byte-compatible in
+both directions — a disk-format regression silently wipes favorites.
 
-**Problem:** The `DeparturesViewModel` construction (the `quickCacheRead` /
-`computeState` pipeline wiring around `computeTileState` + `makeFetchNetworkDeparturesBatch`),
-plus the `FavoritesViewModel` and `SettingsViewModel` factory blocks, are duplicated
-nearly line-for-line. Only real differences: graph object (`PhoneGraph` vs `WearGraph`),
-user-agent string, and `peerLabel` ("watch" vs "phone").
+**Where:** `core/.../api/TransitlandClient.kt` (11 private response DTOs), `model/Stop`,
+`FeedAttribution`, `tile` cache models (`CachedStopDepartures`/`CachedDeparture`/`Alert`),
+`sync/SyncState`/`FavoriteEntry`, phone `TrackingState`.
 
-**Fix:** Extract a builder in `shared-android` (e.g.
-`dev.catchthenext.android.ui.ViewModelWiring`) that takes the graph's collaborators
-(client, tile data store, favorites manager, sync engine) plus the few string params,
-and returns the configured ViewModels/factories. Phone and wear factories collapse to
-parameter lists. Do `SettingsViewModel`/`FavoritesViewModel` first (small, mechanical),
-then the departures pipeline.
+**Gate (write and pass before any production swap):** golden-file compat tests in
+core/shared-android — check in fixtures of *current production* serialized forms (favorites
+`favorites_list` payload, `nearby_departures_v2` tile cache, sync data-layer
+`Map<String, FavoriteEntry>` payload, cli `favorites.json`, `tracking_state`), plus a
+round-trip matrix (Gson-encode→kotlinx-decode and reverse) for every persisted model.
 
-## 2. Deduplicate the DI graphs themselves
+**Steps:** (1) add `kotlinx-serialization-json` + plugin to `gradle/libs.versions.toml`;
+(2) `@Serializable` (+ `@SerialName` matching every existing field name) on the DTOs and
+persisted models above; (3) shared `Json { ignoreUnknownKeys = true; explicitNulls = false;
+encodeDefaults = true }` — verify each choice against the golden tests, not by assumption
+(Gson omits nulls; confirm enum encoding for `DepartureTimeSource`/`AlertSeverity`); (4) swap
+one store at a time — TransitlandClient DTOs first (wire-only, no persistence risk), sync
+payloads **last**; (5) drop the Gson dependency when zero refs remain (`AppJson` is the last
+holdout).
 
-**Where:** `wear/src/main/kotlin/dev/catchthenext/wear/WearGraph.kt:12-40`,
-`phone/src/main/kotlin/dev/catchthenext/phone/PhoneGraph.kt:14-60`.
-
-**Problem:** Same double-checked-locking singleton boilerplate for
-`transitlandClient()`, `syncStateStore()`, `favoritesManager()` in both modules.
-
-**Fix:** A shared base (object delegating to a `CommonGraph(context, userAgent, ...)`
-class in `shared-android`) that owns the lazy singletons; per-app graphs just supply
-construction parameters. Pairs naturally with item 1.
-
-## 3. Server: unify 511-vs-Transitland routing in one module
-
-**Where:** `server/proxy.py` — synthetic onestop_id helpers (~lines 51-95) and the
-three-way classification "local_always" / "local_or_tl" / "tl" / "none" in the batch
-departures path (around `_fetch_one`, ~lines 560-600);
-`server/gtfs511/feed_mapping.py:143-162` (`in_bay_area`, `is_bay_area_feed`).
-
-**Problem:** The decision of which upstream serves a stop is split across proxy.py and
-feed_mapping.py. Adding a second regional feed or changing the fallback strategy means
-edits in both files, and the rules are hard to read as a whole.
-
-**Fix:** `server/routing.py` with
-`classify_departure_source(onestop_id, feed_onestop_id) -> Plan` encapsulating all
-three rules (synthetic → always local; Bay Area TL stop → local first, TL fallback;
-else TL). proxy.py calls it once per stop. Related plan context lives in the memory
-note "Transitland usage reduction" and commit `d72d378`.
-
-## 4. Stale-stop resolution doesn't run in the wear tile path (behavior change)
-
-**Where:** `shared-android/.../tile/TileState.kt` `resolveStaleStops()` (~line 169);
-callers: `phone/.../PhoneViewModelFactory.kt:102-108`, `wear/.../MainActivity.kt:213-219`.
-Missing caller: `wear/.../tile/ClosestStopTileService.kt` (uses
-`makeFetchNetworkDeparturesBatch` at ~line 133 but never resolves `isStale`).
-
-**Problem:** When Transitland rotates a stop's integer ID, the proxy flags it stale and
-the app UIs re-resolve via nearby-stops + `stop_id` match, but the tile itself never
-does — a tile-only user can show stale favorites indefinitely.
-
-**Fix:** Either call `resolveStaleStops()` (and persist the updated favorites) from the
-tile service's refresh path, or fold the resolution into `computeTileState` /
-`persistDepartures` so every consumer gets it. Decide whether tile-triggered favorite
-writes are acceptable given the favorites sync protocol (see
-`shared-android/.../sync/`, memory note "Favorites sync architecture").
-
-## 5. Server: validation layer for app.py endpoints
-
-**Where:** `server/app.py` — `_int_param` (~line 15) and the copy-pasted
-param-check-then-`HTTPResponse` blocks in stops/geocode (~lines 49-102) and batch
-(~lines 122-146) handlers.
-
-**Problem:** Each route re-implements validate-or-return-JSON-error; lat/lon pairing
-and float validation aren't covered by the one helper; error shape is enforced only by
-convention.
-
-**Fix:** `server/validation.py` with `require_float(name)`, `require_int(name, min, max)`
-etc. raising a `ValidationError`, plus a bottle error handler (or small decorator —
-remember this is CGI, keep it import-light) that renders the uniform JSON error.
-
-## 6. Centralize tuning constants
-
-**Where (server):** `server/proxy.py` lines ~40-49 (`_RESPONSE_CACHE_TTL=50`,
-`_GEOCODE_CACHE_TTL=3600`, `_STOP_ID_CACHE_TTL=180d`, `_BATCH_MAX_STOPS=6`), plus
-`_UPSTREAM_STOPS_LIMIT`, `_STOPS_GRID_SLACK_M` near the stops path.
-**Where (Kotlin):** `shared-android/.../tile/TileState.kt:17-18`
-(`CACHE_TTL_MS=60_000`, `MAX_BATCH_STOPS=4` — note `updateNearbyStopsDepartures` also
-has its own `maxStops: Int = 4` default), `wear/.../tile/ClosestStopTileService.kt:48-49`
-(refresh threshold), `TileState.kt` `thresholdMeters = 1609` default,
-`AddStopViewModel.kt:41,45` (radius 600/1500).
-
-**Problem:** Cache/radius/limit tuning requires grep across files; client and server
-each hold half the knobs. Note `MAX_BATCH_STOPS=4` (client) vs `_BATCH_MAX_STOPS=6`
-(server) — intentional headroom, but undocumented.
-
-**Fix:** Server: move into `config.py` (already the config home, env-overridable).
-Kotlin: a `TileConstants`/`Defaults` object in shared-android; route the AddStop radii
-through `DistanceUnitStore`, which already manages the user-facing threshold.
-
-## 7. Remove or wire up the single-stop tile fetcher
-
-**Where:** `shared-android/.../tile/TileState.kt` `makeFetchNetworkDepartures()`
-(single-stop variant) and its tests in `TileStateTest.kt` (~lines 273-400).
-
-**Problem:** Production only uses `makeFetchNetworkDeparturesBatch` (call sites:
-PhoneViewModelFactory, wear MainActivity, ClosestStopTileService). The single-stop
-variant is exercised only by tests. After the helper extraction both share the cache
-logic, so the tests largely duplicate batch coverage.
-
-**Fix:** Delete the function and port any unique test assertions (forceFresh,
-timeSource retention) to batch-based tests.
-
-## 8. Gson → kotlinx.serialization (or at least one shared Gson)
-
-**Where:** `core/.../api/TransitlandClient.kt:131-321` (11 private response data
-classes), plus separate `Gson()` instances in `TransitlandClient`,
-`AndroidFavoritesManager`, `AttributionStore`, `CliFavoritesManager`, `TileDataStore`.
-
-**Problem:** ~120 lines of Gson-shaped DTO boilerplate; five independently constructed
-Gson instances (config drift risk; reflection cost on watch hardware).
-
-**Fix:** Smaller step: one shared configured Gson (e.g. `dev.catchthenext.json.Json`)
-in core. Larger step: kotlinx.serialization with `@Serializable` DTOs — also removes
-reflection, which matters for wear startup. Migrate persisted formats carefully:
-favorites JSON, tile cache (`nearby_departures_v2` key), and sync payloads must stay
-wire/disk compatible.
-
-## 9. Shared alert rendering composable
-
-**Where:** `phone/.../ui/AlertCard.kt:26-54`, `wear/.../ui/AlertItem.kt:17-39`.
-
-**Problem:** Severity→color mapping and header/description/url layout logic duplicated;
-adding a severity level means touching both. Material3 vs Wear Compose APIs prevent a
-single composable, but the *logic* (color selection, text selection/truncation rules)
-can live in shared-android with thin platform wrappers.
+**Verify:** full test suite + on-device upgrade test (install current release, create
+favorites + tile cache, upgrade to branch build, confirm favorites/tile/attributions
+survive).
 
 ## Explicitly rejected (don't redo these)
 

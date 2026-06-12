@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.catchthenext.android.storage.DistanceUnit
 import dev.catchthenext.android.storage.localeDefaultUnit
+import dev.catchthenext.android.tile.Tuning
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -35,7 +36,7 @@ class SettingsViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), localeDefaultUnit())
 
     val thresholdMeters: StateFlow<Int> = thresholdMetersFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 1609)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Tuning.DEFAULT_THRESHOLD_METERS)
 
     val peerReachable: StateFlow<Boolean> = peerReachableFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
