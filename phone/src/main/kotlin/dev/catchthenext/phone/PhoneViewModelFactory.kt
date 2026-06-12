@@ -140,7 +140,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
                 persistUnit = { store.setUnit(it) },
                 readAlertsByStopId = {
                     dataStore.read().nearbyDepartures
-                        .associate { it.stopId to (it.alerts?.isNotEmpty() == true) }
+                        .associate { it.stopId to it.alerts.orEmpty() }
                 },
             ) as T
         }

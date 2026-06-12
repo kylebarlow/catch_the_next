@@ -13,9 +13,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -84,14 +82,15 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
                         supportingContent = distanceLabel?.let { { Text(it) } },
                         trailingContent = {
                             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                if (alertsByStopId[stop.id] == true) {
-                                    Icon(
-                                        imageVector = Icons.Default.Warning,
-                                        contentDescription = "Service alert",
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                if (alertsByStopId[stop.id].orEmpty().isNotEmpty()) {
+                                    IconButton(onClick = { navController.navigate("alerts/${stop.id}") }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Warning,
+                                            contentDescription = "Service alert",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
                                 }
                                 IconButton(onClick = { viewModel.removeFavorite(stop.onestopId ?: "") }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Remove")

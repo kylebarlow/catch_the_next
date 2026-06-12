@@ -35,6 +35,7 @@ import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.android.ui.FavoritesViewModel
 import dev.catchthenext.android.ui.SettingsViewModel
+import dev.catchthenext.android.ui.StopAlertsViewModel
 import dev.catchthenext.android.ui.StopConfirmViewModel
 import dev.catchthenext.android.ui.StopDetailsViewModel
 import dev.catchthenext.model.Stop
@@ -44,6 +45,7 @@ import dev.catchthenext.wear.ui.DeparturesScreen
 import dev.catchthenext.wear.ui.FavoritesScreen
 import dev.catchthenext.wear.ui.SettingsScreen
 import dev.catchthenext.wear.ui.SettingsThresholdScreen
+import dev.catchthenext.wear.ui.StopAlertsScreen
 import dev.catchthenext.wear.ui.StopConfirmScreen
 import dev.catchthenext.wear.ui.StopDetailsScreen
 import dev.catchthenext.android.sync.FavoritesSyncListener
@@ -109,6 +111,12 @@ private fun WearNavGraph(navController: NavHostController, factory: WearViewMode
             val detailsFactory = StopDetailsViewModelFactory(navController.context, stopId)
             val vm: StopDetailsViewModel = viewModel(factory = detailsFactory)
             StopDetailsScreen(navController = navController, viewModel = vm)
+        }
+        composable("alerts/{stopId}") { backStackEntry ->
+            val stopId = backStackEntry.arguments?.getString("stopId")?.toLongOrNull() ?: 0L
+            val alertsFactory = StopAlertsViewModelFactory(navController.context, stopId)
+            val vm: StopAlertsViewModel = viewModel(factory = alertsFactory)
+            StopAlertsScreen(navController = navController, viewModel = vm)
         }
         composable("confirm") {
             val stop = WearGraph.pendingConfirmStop
@@ -243,7 +251,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
                 persistUnit = { store.setUnit(it) },
                 readAlertsByStopId = {
                     dataStore.read().nearbyDepartures
-                        .associate { it.stopId to (it.alerts?.isNotEmpty() == true) }
+                        .associate { it.stopId to it.alerts.orEmpty() }
                 },
             ) as T
         }
@@ -288,6 +296,27 @@ class StopDetailsViewModelFactory(
             favoritesManager = WearGraph.favoritesManager(context),
             stopId = stopId,
         ) as T
+}
+
+class StopAlertsViewModelFactory(
+    private val context: Context,
+    private val stopId: Long,
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        val dataStore = TileDataStore(context)
+        val favoritesManager = WearGraph.favoritesManager(context)
+        return StopAlertsViewModel(
+            stopId = stopId,
+            readAlerts = { id ->
+                dataStore.read().nearbyDepartures
+                    .firstOrNull { it.stopId == id }?.alerts.orEmpty()
+            },
+            getStopName = { id ->
+                favoritesManager.getFavorites().firstOrNull { it.id == id }?.stopName
+            },
+        ) as T
+    }
 }
 
 class StopConfirmViewModelFactory(

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.catchthenext.model.Stop
 import dev.catchthenext.storage.FavoritesManager
+import dev.catchthenext.model.Alert
 import dev.catchthenext.android.location.CurrentLocationProvider
 import dev.catchthenext.android.location.LatLon
 import dev.catchthenext.android.storage.DistanceUnit
@@ -25,15 +26,15 @@ class FavoritesViewModel(
     private val highAccuracyLocate: CurrentLocationProvider = locationProvider,
     distanceUnitFlow: Flow<DistanceUnit>,
     private val persistUnit: suspend (DistanceUnit) -> Unit,
-    private val readAlertsByStopId: (suspend () -> Map<Long, Boolean>)? = null,
+    private val readAlertsByStopId: (suspend () -> Map<Long, List<Alert>>)? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     val favorites: StateFlow<List<Stop>> = favoritesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _alertsByStopId = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
-    val alertsByStopId: StateFlow<Map<Long, Boolean>> = _alertsByStopId.asStateFlow()
+    private val _alertsByStopId = MutableStateFlow<Map<Long, List<Alert>>>(emptyMap())
+    val alertsByStopId: StateFlow<Map<Long, List<Alert>>> = _alertsByStopId.asStateFlow()
 
     private val _location = MutableStateFlow<LatLon?>(null)
     val location: StateFlow<LatLon?> = _location.asStateFlow()

@@ -21,12 +21,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import dev.catchthenext.android.sync.FavoritesSyncListener
+import dev.catchthenext.android.tile.TileDataStore
 import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.android.ui.FavoritesViewModel
 import dev.catchthenext.android.ui.PlaceSearchViewModel
 import dev.catchthenext.android.ui.SettingsViewModel
+import dev.catchthenext.android.ui.StopAlertsViewModel
 import dev.catchthenext.android.ui.StopConfirmViewModel
 import dev.catchthenext.android.ui.StopDetailsViewModel
 import dev.catchthenext.model.Stop
@@ -36,6 +38,7 @@ import dev.catchthenext.phone.ui.AppTheme
 import dev.catchthenext.phone.ui.DeparturesScreen
 import dev.catchthenext.phone.ui.FavoritesScreen
 import dev.catchthenext.phone.ui.SettingsScreen
+import dev.catchthenext.phone.ui.StopAlertsScreen
 import dev.catchthenext.phone.ui.StopConfirmScreen
 import dev.catchthenext.phone.ui.StopDetailsScreen
 
@@ -127,6 +130,12 @@ private fun PhoneNavGraph(navController: NavHostController, factory: PhoneViewMo
             val vm: StopDetailsViewModel = viewModel(factory = detailsFactory)
             StopDetailsScreen(navController = navController, viewModel = vm)
         }
+        composable("alerts/{stopId}") { backStackEntry ->
+            val stopId = backStackEntry.arguments?.getString("stopId")?.toLongOrNull() ?: 0L
+            val alertsFactory = StopAlertsViewModelFactory(navController.context, stopId)
+            val vm: StopAlertsViewModel = viewModel(factory = alertsFactory)
+            StopAlertsScreen(navController = navController, viewModel = vm)
+        }
         composable("confirm") {
             val stop = PhoneGraph.pendingConfirmStop
             if (stop == null) {
@@ -159,6 +168,27 @@ class StopDetailsViewModelFactory(
             favoritesManager = PhoneGraph.favoritesManager(context),
             stopId = stopId,
         ) as T
+}
+
+class StopAlertsViewModelFactory(
+    private val context: Context,
+    private val stopId: Long,
+) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        val dataStore = TileDataStore(context)
+        val favoritesManager = PhoneGraph.favoritesManager(context)
+        return StopAlertsViewModel(
+            stopId = stopId,
+            readAlerts = { id ->
+                dataStore.read().nearbyDepartures
+                    .firstOrNull { it.stopId == id }?.alerts.orEmpty()
+            },
+            getStopName = { id ->
+                favoritesManager.getFavorites().firstOrNull { it.id == id }?.stopName
+            },
+        ) as T
+    }
 }
 
 class StopConfirmViewModelFactory(

@@ -1,10 +1,13 @@
 package dev.catchthenext.wear.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -72,14 +75,21 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
                     onClick = { navController.navigate("details/${stop.id}") },
                     label = { Text(stop.stopName) },
                     secondaryLabel = distanceLabel?.let { { Text(it) } },
-                    icon = if (alertsByStopId[stop.id] == true) {
+                    icon = if (alertsByStopId[stop.id].orEmpty().isNotEmpty()) {
                         {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = "Service alert",
-                                tint = Color(0xFFFFC107),
-                                modifier = Modifier.size(16.dp),
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clickable { navController.navigate("alerts/${stop.id}") },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = "Service alert",
+                                    tint = Color(0xFFFFC107),
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
                         }
                     } else null,
                 )
