@@ -32,6 +32,11 @@ out/
 # Local configuration
 local.properties
 
+# Play upload signing — never commit the keystore or its passwords
+keystore.properties
+*.keystore
+*.jks
+
 # Favorites saved locally
 favorites.json
 ~/.catch_the_next/

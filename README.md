@@ -151,9 +151,25 @@ See `deploy/nfsn-htaccess.sample` for the `.htaccess` config. Set `TRANSITLAND_A
 
 ---
 
+## Editions (product flavors)
+
+The phone app ships in two editions via the `distribution` Gradle flavor dimension on a single branch:
+
+- **`play`** — `com.kylebarlow.catchthenext` (Google Play). Full-featured: watch↔phone favorites sync (Wearable Data Layer) and FusedLocation. Ships a private API key with full backend access (Transitland for nationwide stops + 511 offload). Read from `local.properties`.
+- **`fdroid`** — `com.kylebarlow.catchthenext.bay`, "Catch The Next: Bay" (F-Droid). Phone only, **zero proprietary dependencies**: AOSP `LocationManager` instead of FusedLocation, no watch sync. Ships a committed **public** API key that the backend hard-scopes to **511 / Bay Area data only** (never Transitland).
+
+GMS/Wear/WorkManager code is confined to `*/src/play`; the FOSS twins live in `*/src/fdroid`. The Wear module is Play-only and resolves shared-android's `play` variant. See `docs/fdroid-metadata.md` and `docs/privacy-policy.md`.
+
+```
+./gradlew :phone:assemblePlayDebug :phone:assembleFdroidDebug :wear:assembleDebug
+./gradlew :phone:dependencies --configuration fdroidReleaseRuntimeClasspath | grep -i gms   # → no output
+```
+
 ## Design decisions
 
 **Proxy hides the Transitland key.** The Kotlin client calls the proxy with an app-level key (`X-API-Key` header, from `APP_API_KEY`). The real Transitland key lives only on the server.
+
+**Per-key authorization scopes.** The backend recognizes two key scopes (`server/auth.py`): `full` keys reach everything; `public` keys (the committed F-Droid "Bay" key) are hard-gated to 511 / local Bay Area data — any Transitland path is refused with `403 forbidden_upstream`.
 
 **Log-based rate limiting.** The rate limiter reads the Apache access log rather than maintaining a separate database. Stateless, zero extra dependencies, survives restarts — appropriate for a low-volume tile app.
 
@@ -174,3 +190,7 @@ See `deploy/nfsn-htaccess.sample` for the `.htaccess` config. Set `TRANSITLAND_A
 - [ ] Realtime data: surface `CANCELED` trips in the tile
 - [ ] Refresh strategy: WorkManager vs tile's built-in `onTileRequest` freshness window
 - [ ] Offline handling: cache last-known departures and show staleness indicator
+
+## License
+
+[GPL-3.0-or-later](LICENSE). © Kyle Barlow.

@@ -6,6 +6,9 @@ def load_config():
         "TRANSITLAND_API_KEY": os.environ.get("TRANSITLAND_API_KEY", ""),
         "TRANSITLAND_BASE_URL": os.environ.get("TRANSITLAND_BASE_URL", "https://transit.land/api/v2/rest"),
         "APP_API_KEYS": [k.strip() for k in os.environ.get("APP_API_KEYS", "").split(",") if k.strip()],
+        # Public, 511-only keys (e.g. the committed F-Droid "Bay" edition key). The backend
+        # hard-scopes these to local Bay Area / 511 data and refuses any Transitland path.
+        "APP_API_KEYS_PUBLIC": [k.strip() for k in os.environ.get("APP_API_KEYS_PUBLIC", "").split(",") if k.strip()],
         "RATE_LIMIT_PER_HOUR": int(os.environ.get("RATE_LIMIT_PER_HOUR", "500")),
         "ACCESS_LOG_PATH": os.environ.get("ACCESS_LOG_PATH", "/home/logs/access_log"),
         "RATE_LIMIT_TAIL_BYTES": int(os.environ.get("RATE_LIMIT_TAIL_BYTES", "262144")),

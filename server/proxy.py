@@ -128,7 +128,27 @@ def _http_get_json(url: str, params: dict | None = None,
         )
 
 
-def _upstream_get(path: str, params: dict, allow_404: bool = False):
+# Authorization scopes mirror auth.py. Threaded explicitly through the call chain (rather than
+# read from a contextvar) because departures fan out across a ThreadPoolExecutor, whose worker
+# threads do not inherit request context.
+SCOPE_FULL = "full"
+SCOPE_PUBLIC = "public"
+
+
+def _forbidden_upstream():
+    """Defense in depth: any public-scope code path that reaches Transitland raises here,
+    so the 511-only restriction is enforced even if a caller/client misbehaves."""
+    return bottle.HTTPResponse(
+        body=json.dumps({"error": "forbidden_upstream"}),
+        status=403,
+        headers={"Content-Type": "application/json"},
+    )
+
+
+def _upstream_get(path: str, params: dict, allow_404: bool = False, scope: str = SCOPE_FULL):
+    # Single Transitland choke point. Public scope must never reach it.
+    if scope == SCOPE_PUBLIC:
+        raise _forbidden_upstream()
     params = dict(params)
     params["apikey"] = _api_key
     url = f"{_base_url}/{path}"
@@ -228,7 +248,7 @@ def _shape_local_stop(row) -> dict | None:
     }
 
 
-def get_stops(lat, lon, radius=500, limit=20):
+def get_stops(lat, lon, radius=500, limit=20, scope=SCOPE_FULL):
     radius = min(int(radius), 5000)
     limit = min(int(limit), 50)
 
@@ -243,6 +263,12 @@ def get_stops(lat, lon, radius=500, limit=20):
                 if shaped is not None:
                     stops.append(shaped)
             return {"stops": stops}
+
+    # Public scope is 511-only: outside the Bay Area (or static missing) there is no local
+    # data and Transitland is off-limits, so return empty. The Bay client shows a clear
+    # "Bay Area only" empty state.
+    if scope == SCOPE_PUBLIC:
+        return {"stops": []}
 
     # Transitland path with grid-snapped caching.
     cell_lat = round(float(lat) / _STOPS_GRID_DEG)
@@ -431,8 +457,10 @@ def _shape_departures(data):
     return departures
 
 
-def get_departures(stop_id, next_seconds=3600):
+def get_departures(stop_id, next_seconds=3600, scope=SCOPE_FULL):
     next_seconds = min(int(next_seconds), 86400)
+    # The integer-id departures path is Transitland-only; the Bay client never uses it
+    # (it sends synthetic 511: ids to /departures). Public scope is refused at the choke point.
     cache_key = f"dep:{stop_id}:{next_seconds}"
     cached = cache.get(cache_key)
     if cached is not None:
@@ -440,6 +468,7 @@ def get_departures(stop_id, next_seconds=3600):
     data = _upstream_get(
         f"stops/{stop_id}/departures",
         {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
+        scope=scope,
     )
     counters.increment("transitland_calls")
     result = {"departures": _shape_departures(data), "alerts": _shape_alerts(data)}
@@ -447,7 +476,7 @@ def get_departures(stop_id, next_seconds=3600):
     return result
 
 
-def _resolve_stop_info(oid: str):
+def _resolve_stop_info(oid: str, scope: str = SCOPE_FULL):
     """Return ``{integer_id, feed_onestop_id, stop_id}`` for *oid* or None.
 
     Cached for _STOP_ID_CACHE_TTL. The richer record (vs. just the integer)
@@ -459,7 +488,7 @@ def _resolve_stop_info(oid: str):
     if isinstance(cached, dict) and "integer_id" in cached:
         return cached
 
-    data = _upstream_get("stops", {"onestop_id": oid, "limit": 1})
+    data = _upstream_get("stops", {"onestop_id": oid, "limit": 1}, scope=scope)
     counters.increment("transitland_calls")
     for s in (data or {}).get("stops", []):
         if s.get("onestop_id") == oid and s.get("id"):
@@ -496,12 +525,13 @@ def _refresh_511_state() -> dict:
     }
 
 
-def _tl_departures(oid: str, next_seconds: int) -> dict:
+def _tl_departures(oid: str, next_seconds: int, scope: str = SCOPE_FULL) -> dict:
     """Fetch departures for *oid* from Transitland, keyed by onestop_id."""
     data = _upstream_get(
         f"stops/{urllib.parse.quote(oid, safe='')}/departures",
         {"next": next_seconds, "relative_date": "TODAY", "include_alerts": "true"},
         allow_404=True,
+        scope=scope,
     )
     counters.increment("transitland_calls")
     if data is None:  # 404 — treat as empty
@@ -524,7 +554,7 @@ def _local_departures(oid: str, feed_id: str, stop_id: str, next_seconds: int) -
     }
 
 
-def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
+def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600, scope=SCOPE_FULL):
     next_seconds = min(int(next_seconds), 86400)
     cache_key = f"departures:{','.join(sorted(onestop_ids))}:{next_seconds}"
     cached = cache.get(cache_key)
@@ -533,10 +563,20 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
 
     # Classification pass (sequential, before the pool): routing.py decides
     # *which* source per oid; the staleness/fallback *execution* stays below.
+    #
+    # Public scope is 511-only: never resolve non-synthetic ids via Transitland
+    # (resolve returns None → kind "none" → empty). Only synthetic 511: ids
+    # classify as "local_always" and serve locally. The Bay client only ever
+    # sends synthetic ids, so this is the normal — not degraded — path for it.
+    def _resolve_for_scope(oid):
+        if scope == SCOPE_PUBLIC:
+            return None
+        return _resolve_stop_info(oid, scope=scope)
+
     plans = {
         oid: routing.classify_departure_source(
             oid,
-            resolve_stop_info=_resolve_stop_info,
+            resolve_stop_info=_resolve_for_scope,
             is_bay_area_feed=_bay_area_feed,
         )
         for oid in onestop_ids
@@ -564,10 +604,11 @@ def get_departures_by_onestop_ids(onestop_ids, next_seconds=3600):
                     return _local_departures(oid, plan.feed_id, plan.stop_id, next_seconds)
                 except Exception as e:  # noqa: BLE001
                     print(f"gtfs511 fallback for {oid}: {e}", file=sys.stderr)
-            # RT missing / stale / static missing / lookup failed → Transitland.
-            return _tl_departures(oid, next_seconds)
+            # RT missing / stale / static missing / lookup failed → Transitland
+            # (refused for public scope at the choke point).
+            return _tl_departures(oid, next_seconds, scope=scope)
         # plan.kind == "tl"
-        return _tl_departures(oid, next_seconds)
+        return _tl_departures(oid, next_seconds, scope=scope)
 
     with ThreadPoolExecutor(max_workers=max(len(onestop_ids), 1)) as pool:
         stops = list(pool.map(_fetch_one, onestop_ids))

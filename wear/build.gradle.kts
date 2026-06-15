@@ -12,11 +12,15 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "dev.catchthenext"
+        // Match the Play phone edition so the watch app pairs with it. WearOS requires GMS
+        // on-device, so the watch app is Play-only and always uses shared-android's `play` variant.
+        applicationId = "com.kylebarlow.catchthenext"
         minSdk = 30
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        // shared-android is flavored (play/fdroid); this un-flavored module resolves `play`.
+        missingDimensionStrategy("distribution", "play")
     }
 
     compileOptions {

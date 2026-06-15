@@ -5,14 +5,12 @@ import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.google.android.gms.wearable.Wearable
 import dev.catchthenext.model.Stop
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.tasks.await
 
 private const val TAG = "FavSync"
 private val Context.syncStateDataStore by preferencesDataStore(name = "sync_state")
@@ -23,10 +21,10 @@ class SyncStateStore(private val context: Context) {
 
     suspend fun awaitNodeId(): String = nodeIdDeferred.await()
 
-    // Resolves the local node ID and calls ensureInitialized. Called from App.onCreate.
-    suspend fun initFromContext(context: Context, legacyFavorites: List<Stop>) {
-        val nodeId = runCatching { Wearable.getNodeClient(context).localNode.await().id }
-            .getOrDefault("unknown")
+    // Resolves the local node ID (via the flavor-provided supplier — GMS on play, a synthetic
+    // "local" id on fdroid) and calls ensureInitialized. Called from App.onCreate.
+    suspend fun initFromContext(nodeIdProvider: suspend () -> String?, legacyFavorites: List<Stop>) {
+        val nodeId = nodeIdProvider() ?: "unknown"
         ensureInitialized(nodeId, legacyFavorites)
     }
 

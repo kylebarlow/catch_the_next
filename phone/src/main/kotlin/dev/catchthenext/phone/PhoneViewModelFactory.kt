@@ -17,6 +17,7 @@ class PhoneViewModelFactory(private val context: Context) : ViewModelProvider.Fa
             client = PhoneGraph.transitlandClient(),
             favoritesManager = PhoneGraph.favoritesManager(context),
             syncStateStore = PhoneGraph.syncStateStore(context),
+            favoritesSyncController = PhoneGraph.favoritesSyncController(),
             peerLabel = "watch",
         )
         createSharedViewModel(modelClass, deps)?.let { return it as T }

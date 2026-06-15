@@ -4,7 +4,9 @@ import android.content.Context
 import dev.catchthenext.android.storage.AttributionRecordingClient
 import dev.catchthenext.android.storage.AttributionStore
 import dev.catchthenext.android.storage.SyncedFavoritesManager
+import dev.catchthenext.android.sync.FavoritesSyncController
 import dev.catchthenext.android.sync.SyncStateStore
+import dev.catchthenext.android.sync.defaultFavoritesSyncController
 import dev.catchthenext.api.TransitApi
 import dev.catchthenext.api.TransitlandClient
 import dev.catchthenext.model.Stop
@@ -22,6 +24,7 @@ open class CommonGraph(
     @Volatile private var clientRef: TransitApi? = null
     @Volatile private var syncStateStoreRef: SyncStateStore? = null
     @Volatile private var favoritesManagerRef: SyncedFavoritesManager? = null
+    @Volatile private var favoritesSyncControllerRef: FavoritesSyncController? = null
     @Volatile private var appCtx: Context? = null
     @Volatile var pendingConfirmStop: Stop? = null
 
@@ -47,5 +50,10 @@ open class CommonGraph(
 
     fun favoritesManager(ctx: Context): SyncedFavoritesManager = favoritesManagerRef ?: synchronized(this) {
         favoritesManagerRef ?: SyncedFavoritesManager(syncStateStore(ctx)).also { favoritesManagerRef = it }
+    }
+
+    // Resolved from the flavor-provided defaultFavoritesSyncController() (GMS on play, no-op on fdroid).
+    fun favoritesSyncController(): FavoritesSyncController = favoritesSyncControllerRef ?: synchronized(this) {
+        favoritesSyncControllerRef ?: defaultFavoritesSyncController().also { favoritesSyncControllerRef = it }
     }
 }

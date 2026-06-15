@@ -11,6 +11,14 @@ android {
         minSdk = 30
     }
 
+    // Dual-distribution split: `play` (GMS — FusedLocation + Wearable sync) and `fdroid`
+    // (AOSP/FOSS — LocationManager, no sync). See src/play and src/fdroid source sets.
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("play") { dimension = "distribution" }
+        create("fdroid") { dimension = "distribution" }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
@@ -27,10 +35,12 @@ dependencies {
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.lifecycle.viewmodel.savedstate)
     implementation(libs.datastore.preferences)
-    implementation(libs.play.services.location)
-    implementation(libs.coroutines.play.services)
-    implementation(libs.work.runtime.ktx)
-    api(libs.play.services.wearable)
+    // GMS / WorkManager are confined to the play variant (src/play). The wear module
+    // consumes the wearable types transitively, so play-services-wearable must be `api`.
+    "playImplementation"(libs.play.services.location)
+    "playImplementation"(libs.coroutines.play.services)
+    "playImplementation"(libs.work.runtime.ktx)
+    "playApi"(libs.play.services.wearable)
     testImplementation(libs.coroutines.test)
     testImplementation(libs.turbine)
     testImplementation(libs.junit.jupiter)

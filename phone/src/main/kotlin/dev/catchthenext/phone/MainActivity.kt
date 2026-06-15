@@ -20,7 +20,6 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import dev.catchthenext.android.sync.FavoritesSyncListener
 import dev.catchthenext.android.tile.TileDataStore
 import dev.catchthenext.android.ui.AboutViewModel
 import dev.catchthenext.android.ui.AddStopViewModel
@@ -50,7 +49,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         CoroutineScope(Dispatchers.IO).launch {
-            FavoritesSyncListener.coldStartReconcile(
+            PhoneGraph.favoritesSyncController().reconcile(
                 applicationContext,
                 PhoneGraph.syncStateStore(applicationContext),
             )

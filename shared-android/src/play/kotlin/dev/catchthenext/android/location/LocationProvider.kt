@@ -18,16 +18,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 private const val MAX_LAST_LOCATION_AGE_MS = 2 * 60 * 1000L
 private const val MAX_ACCURACY_METERS = 500f
 
-enum class LocationMode { PASSIVE, HIGH }
-
-fun interface CurrentLocationProvider {
-    suspend fun currentLocation(): LatLon?
-}
-
-/** Returns a [CurrentLocationProvider] that always forces a HIGH-accuracy GPS fix. */
-fun LocationProvider.asHighAccuracy(): CurrentLocationProvider =
-    CurrentLocationProvider { locate(LocationMode.HIGH) }
-
 class LocationProvider(private val context: Context) : CurrentLocationProvider {
     override suspend fun currentLocation(): LatLon? = locate(LocationMode.PASSIVE)
 

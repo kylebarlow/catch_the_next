@@ -39,7 +39,6 @@ import dev.catchthenext.wear.ui.SettingsThresholdScreen
 import dev.catchthenext.wear.ui.StopAlertsScreen
 import dev.catchthenext.wear.ui.StopConfirmScreen
 import dev.catchthenext.wear.ui.StopDetailsScreen
-import dev.catchthenext.android.sync.FavoritesSyncListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -52,7 +51,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         CoroutineScope(Dispatchers.IO).launch {
-            FavoritesSyncListener.coldStartReconcile(
+            WearGraph.favoritesSyncController().reconcile(
                 applicationContext,
                 WearGraph.syncStateStore(applicationContext),
             )
@@ -138,6 +137,7 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
             client = WearGraph.transitlandClient(),
             favoritesManager = WearGraph.favoritesManager(context),
             syncStateStore = WearGraph.syncStateStore(context),
+            favoritesSyncController = WearGraph.favoritesSyncController(),
             peerLabel = "phone",
         )
         return createSharedViewModel(modelClass, deps) as? T

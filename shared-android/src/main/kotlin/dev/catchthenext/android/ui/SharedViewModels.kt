@@ -7,7 +7,7 @@ import dev.catchthenext.android.location.asHighAccuracy
 import dev.catchthenext.android.storage.AttributionStore
 import dev.catchthenext.android.storage.DistanceUnitStore
 import dev.catchthenext.android.storage.SyncedFavoritesManager
-import dev.catchthenext.android.sync.FavoritesSyncListener
+import dev.catchthenext.android.sync.FavoritesSyncController
 import dev.catchthenext.android.sync.ReachabilityState
 import dev.catchthenext.android.sync.SyncStateStore
 import dev.catchthenext.android.tile.TileDataStore
@@ -25,6 +25,7 @@ class SharedViewModelDeps(
     val client: TransitApi,
     val favoritesManager: SyncedFavoritesManager,
     val syncStateStore: SyncStateStore,
+    val favoritesSyncController: FavoritesSyncController,
     val peerLabel: String,  // "watch" on phone, "phone" on wear
 )
 
@@ -72,7 +73,7 @@ fun createSharedViewModel(modelClass: Class<*>, deps: SharedViewModelDeps): View
             thresholdMetersFlow = store.thresholdMetersFlow,
             persistThreshold = { store.setThresholdMeters(it) },
             peerLabel = deps.peerLabel,
-            doSync = { FavoritesSyncListener.coldStartReconcile(deps.context, deps.syncStateStore) },
+            doSync = { deps.favoritesSyncController.reconcile(deps.context, deps.syncStateStore) },
             peerReachableFlow = ReachabilityState.reachable,
         )
     }

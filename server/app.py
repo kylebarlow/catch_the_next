@@ -1,7 +1,7 @@
 import hmac
 import json
 import bottle
-from auth import require_auth
+from auth import require_auth, current_scope
 from rate_limit import require_rate_limit
 from proxy import get_stops, get_departures, get_departures_by_onestop_ids, geocode, _BATCH_MAX_STOPS
 from config import load_config
@@ -34,7 +34,7 @@ def stops():
     radius = optional_int("radius", 500)
     limit = optional_int("limit", 20)
     bottle.response.content_type = "application/json"
-    return json.dumps(get_stops(lat, lon, radius, limit))
+    return json.dumps(get_stops(lat, lon, radius, limit, scope=current_scope()))
 
 
 @app.route("/api/v2/rest/geocode")
@@ -57,7 +57,7 @@ def geocode_route():
 def departures(stop_id):
     next_seconds = optional_int("next", 3600)
     bottle.response.content_type = "application/json"
-    return json.dumps(get_departures(stop_id, next_seconds))
+    return json.dumps(get_departures(stop_id, next_seconds, scope=current_scope()))
 
 
 @app.route("/api/v2/rest/departures")
@@ -68,7 +68,7 @@ def departures_batch():
     onestop_ids = require_csv("onestop_ids", _BATCH_MAX_STOPS, "too many onestop_ids")
     next_seconds = optional_int("next", 3600)
     bottle.response.content_type = "application/json"
-    return json.dumps(get_departures_by_onestop_ids(onestop_ids, next_seconds))
+    return json.dumps(get_departures_by_onestop_ids(onestop_ids, next_seconds, scope=current_scope()))
 
 
 def _stats_token_from_request():
