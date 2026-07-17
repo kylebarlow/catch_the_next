@@ -146,9 +146,11 @@ fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewMode
                 is DeparturesUi.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                is DeparturesUi.Loaded -> DeparturesContent(state.tileState, navController) { stop ->
-                    controller.start(stop)
-                }
+                is DeparturesUi.Loaded -> DeparturesContent(
+                    state = state.tileState,
+                    navController = navController,
+                    onTrack = { stop -> controller.start(stop) },
+                )
             }
         }
     }
@@ -169,13 +171,13 @@ private fun DeparturesContent(state: TileState, navController: NavController, on
             }
             is TileState.NoLocation -> CenteredMessage("Getting location…")
             is TileState.NetworkError -> CenteredMessage("Network error: ${state.message}")
-            is TileState.Ready -> ReadyContent(state, onTrack)
+            is TileState.Ready -> ReadyContent(state, navController, onTrack)
         }
     }
 }
 
 @Composable
-private fun ReadyContent(state: TileState.Ready, onTrack: (Stop) -> Unit) {
+private fun ReadyContent(state: TileState.Ready, navController: NavController, onTrack: (Stop) -> Unit) {
     val groups = groupDepartures(
         stops = state.stops,
         filter = { it.currentMinutes() in 0..59 },
@@ -188,7 +190,14 @@ private fun ReadyContent(state: TileState.Ready, onTrack: (Stop) -> Unit) {
         if (groups.isEmpty()) {
             item { Text("No departures in the next hour") }
         } else {
-            items(groups) { group -> DepartureCard(group, multiAgency, onTrack = { onTrack(group.stop) }) }
+            items(groups) { group ->
+                DepartureCard(
+                    group = group,
+                    showAgency = multiAgency,
+                    onOpen = { navController.navigate("details/${group.stop.id}") },
+                    onTrack = { onTrack(group.stop) },
+                )
+            }
         }
         item {
             Text(
@@ -203,43 +212,61 @@ private fun ReadyContent(state: TileState.Ready, onTrack: (Stop) -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DepartureCard(group: GroupedDeparture, showAgency: Boolean = false, onTrack: () -> Unit) {
+private fun DepartureCard(
+    group: GroupedDeparture,
+    showAgency: Boolean = false,
+    onOpen: () -> Unit,
+    onTrack: () -> Unit,
+) {
     val routeLabel = buildString {
         append(group.routeShortName)
         if (group.headsign.isNotBlank()) append(" → ${group.headsign}")
         if (group.showStopTag) append(" · ${group.stopName}")
     }
-    Card(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = onTrack)) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                if (group.hasAlert) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = "Service alert",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
+    // Tap opens stop details; long-press keeps the quick "track this stop" shortcut.
+    Card(modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onOpen, onLongClick = onTrack)) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    if (group.hasAlert) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Service alert",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(routeLabel, style = MaterialTheme.typography.bodyMedium)
                 }
-                Text(routeLabel, style = MaterialTheme.typography.bodyMedium)
+                if (showAgency) {
+                    group.agencyName?.let { agency ->
+                        Text(
+                            text = agency,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    group.times.forEach { time ->
+                        val label = time.clockTime?.let { "${timeLabel(time.minutes)} · $it" } ?: timeLabel(time.minutes)
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color(departureColorArgb(time.timeSource)),
+                        )
+                    }
+                }
             }
-            if (showAgency) {
-                group.agencyName?.let { agency ->
-                    Text(
-                        text = agency,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                group.times.forEach { time ->
-                    Text(
-                        text = timeLabel(time.minutes),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color(departureColorArgb(time.timeSource)),
-                    )
-                }
+            IconButton(onClick = onTrack) {
+                Icon(
+                    imageVector = Icons.Outlined.DirectionsBus,
+                    contentDescription = "Track this stop",
+                )
             }
         }
     }

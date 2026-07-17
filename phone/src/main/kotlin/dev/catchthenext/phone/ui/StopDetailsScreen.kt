@@ -69,12 +69,7 @@ fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewMo
                                 items(state.alerts) { alert -> AlertCard(alert) }
                             }
                             items(state.departures) { departure ->
-                                ListItem(
-                                    headlineContent = { Text(departure.displayString()) },
-                                    supportingContent = if (multiAgency) departure.agencyName?.let { agency ->
-                                        { Text(agency) }
-                                    } else null,
-                                )
+                                DepartureRow(departure, showAgency = multiAgency)
                                 HorizontalDivider()
                             }
                             if (dataLabel != null) {

@@ -64,6 +64,28 @@ class FavoritesViewModel(
         }
     }
 
+    /**
+     * Removes [stop] by its onestop id, falling back to rebuilding the list without it when the
+     * favorite has no onestop id (which the onestop-keyed [removeFavorite] can't target).
+     */
+    fun removeFavorite(stop: Stop) {
+        viewModelScope.launch(ioDispatcher) {
+            val onestopId = stop.onestopId
+            if (onestopId != null) {
+                favoritesManager.removeFavorite(onestopId)
+            } else {
+                favoritesManager.saveFavorites(favoritesManager.getFavorites().filterNot { it.id == stop.id })
+            }
+        }
+    }
+
+    /** Re-adds a previously removed favorite — backs the swipe-to-dismiss Undo action. */
+    fun restoreFavorite(stop: Stop) {
+        viewModelScope.launch(ioDispatcher) {
+            favoritesManager.addFavorite(stop)
+        }
+    }
+
     fun toggleUnit() {
         viewModelScope.launch(ioDispatcher) {
             val next = if (distanceUnit.value == DistanceUnit.MILES) DistanceUnit.KM else DistanceUnit.MILES

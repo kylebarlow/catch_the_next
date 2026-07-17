@@ -113,7 +113,12 @@ data class GroupedDeparture(
 data class GroupedDepartureTime(
     val minutes: Long,
     val timeSource: DepartureTimeSource,
+    /** Absolute clock label ("3:42 PM") for far-out departures; null for near-term ones. */
+    val clockTime: String? = null,
 )
+
+/** Departures at least this many minutes out also show an absolute clock time. */
+private const val ABSOLUTE_TIME_MIN_MINUTES = 15L
 
 fun groupDepartures(
     stops: List<StopWithDepartures>,
@@ -131,7 +136,14 @@ fun groupDepartures(
                     headsign = key.second,
                     stopName = swd.stop.stopName,
                     showStopTag = showStopTag,
-                    times = deps.map { GroupedDepartureTime(it.currentMinutes(), it.timeSource) }.sortedBy { it.minutes }.take(maxPerGroup),
+                    times = deps.map {
+                        val mins = it.currentMinutes()
+                        GroupedDepartureTime(
+                            minutes = mins,
+                            timeSource = it.timeSource,
+                            clockTime = if (mins >= ABSOLUTE_TIME_MIN_MINUTES) clockTimeLabel(it.departureEpochMillis) else null,
+                        )
+                    }.sortedBy { it.minutes }.take(maxPerGroup),
                     agencyName = deps.firstOrNull()?.agencyName,
                     hasAlert = swd.alerts.isNotEmpty(),
                     stop = swd.stop,
