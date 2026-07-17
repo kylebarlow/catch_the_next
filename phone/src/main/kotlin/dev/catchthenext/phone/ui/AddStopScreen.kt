@@ -37,6 +37,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import dev.catchthenext.android.location.LatLon
+import dev.catchthenext.android.location.formatDistance
+import dev.catchthenext.android.location.haversineMeters
+import dev.catchthenext.android.storage.DistanceUnitStore
+import dev.catchthenext.android.storage.localeDefaultUnit
 import dev.catchthenext.android.ui.AddStopUi
 import dev.catchthenext.android.ui.AddStopViewModel
 import dev.catchthenext.android.ui.PlaceSearchViewModel
@@ -127,17 +131,28 @@ private fun NearbyTabContent(ui: AddStopUi, onAdd: (Stop) -> Unit) {
             }
             is AddStopUi.Empty -> Text("No stops found nearby")
             is AddStopUi.Error -> Text(state.msg)
-            is AddStopUi.Loaded -> StopList(stops = state.stops, onAdd = onAdd)
+            is AddStopUi.Loaded -> StopList(stops = state.stops, origin = state.origin, onAdd = onAdd)
         }
     }
 }
 
 @Composable
-fun StopList(stops: List<Stop>, onAdd: (Stop) -> Unit) {
+fun StopList(stops: List<Stop>, origin: LatLon?, onAdd: (Stop) -> Unit) {
+    val context = LocalContext.current
+    val unit by remember { DistanceUnitStore(context) }.unitFlow
+        .collectAsState(initial = localeDefaultUnit())
     LazyColumn(Modifier.fillMaxSize()) {
         items(stops) { stop ->
+            // Distance + routes served disambiguate same-named stops (e.g. opposite
+            // sides of the street) so the right one gets favorited the first time.
+            val distanceLabel = origin?.let {
+                formatDistance(haversineMeters(it.lat, it.lon, stop.lat, stop.lon), unit)
+            }
+            val routesLabel = stop.routesServed?.joinToString(", ")?.let { "Routes: $it" }
+            val supporting = listOfNotNull(distanceLabel, routesLabel).joinToString(" · ")
             ListItem(
                 headlineContent = { Text(stop.stopName) },
+                supportingContent = supporting.takeIf { it.isNotEmpty() }?.let { { Text(it) } },
                 trailingContent = {
                     TextButton(onClick = { onAdd(stop) }) { Text("Add") }
                 }

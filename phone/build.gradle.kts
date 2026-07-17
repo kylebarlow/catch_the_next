@@ -110,6 +110,7 @@ dependencies {
     implementation(libs.navigation.compose)
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
+    implementation(libs.work.runtime.ktx)
     // FusedLocation is GMS — Play edition only. The fdroid variant uses shared-android's
     // LocationManager-backed twin and the location/sync code in phone/src/play.
     "playImplementation"(libs.play.services.location)

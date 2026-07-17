@@ -164,6 +164,7 @@ class TransitlandClient(
         @SerializedName("use_without_attribution") val useWithoutAttribution: Boolean = true,
         @SerializedName("license_spdx") val licenseSpdx: String? = null,
         @SerializedName("license_url") val licenseUrl: String? = null,
+        @SerializedName("routes_served") val routesServed: List<String>? = null,
     ) {
         // Returns null for stops missing required fields (Gson can inject null despite non-null defaults).
         fun toStop(fallbackLat: Double? = null, fallbackLon: Double? = null): Stop? {
@@ -190,7 +191,8 @@ class TransitlandClient(
                 lat = lat,
                 lon = lon,
                 onestopId = onestopId,
-                feed = feed
+                feed = feed,
+                routesServed = routesServed?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }
             )
         }
     }

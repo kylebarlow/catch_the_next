@@ -196,7 +196,42 @@ def nearby_stops(
             "_dist_m": dist,
         })
     out.sort(key=lambda s: s["_dist_m"])
-    return out[:limit]
+    out = out[:limit]
+    _attach_routes_served(static_db, out)
+    return out
+
+
+def _attach_routes_served(static_db: sqlite3.Connection, stops: list[dict]) -> None:
+    """Set ``routes_served`` (sorted distinct route short names) on each stop dict.
+
+    Batched over the (small, post-limit) result set. Parent stations aggregate
+    their child platforms' routes via _resolve_stop_id_group.
+    """
+    for s in stops:
+        group = _resolve_stop_id_group(static_db, s["stop_id"])
+        placeholders = ",".join("?" * len(group))
+        rows = static_db.execute(
+            f"""SELECT DISTINCT r.route_short_name, r.route_long_name
+                FROM stop_times st
+                JOIN trips t ON t.trip_id = st.trip_id
+                JOIN routes r ON r.route_id = t.route_id
+                WHERE st.stop_id IN ({placeholders})""",
+            tuple(group),
+        ).fetchall()
+        names = sorted({(r["route_short_name"] or r["route_long_name"] or "").strip()
+                        for r in rows} - {""}, key=_route_sort_key)
+        s["routes_served"] = names
+
+
+def _route_sort_key(name: str):
+    """Numeric-aware route ordering: '5' < '14' < '14R' < 'J' < 'N'."""
+    head = ""
+    for ch in name:
+        if ch.isdigit():
+            head += ch
+        else:
+            break
+    return (0, int(head), name) if head else (1, 0, name)
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────

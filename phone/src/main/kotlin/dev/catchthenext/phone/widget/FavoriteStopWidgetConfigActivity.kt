@@ -62,7 +62,7 @@ class FavoriteStopWidgetConfigActivity : ComponentActivity() {
                         ) {
                             items(favorites) { stop ->
                                 ListItem(
-                                    headlineContent = { Text(stop.stopName) },
+                                    headlineContent = { Text(stop.displayName) },
                                     modifier = Modifier.clickable {
                                         CoroutineScope(Dispatchers.Main).launch {
                                             val glanceId = GlanceAppWidgetManager(this@FavoriteStopWidgetConfigActivity)

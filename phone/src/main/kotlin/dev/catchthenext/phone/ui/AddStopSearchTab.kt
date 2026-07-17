@@ -63,7 +63,7 @@ fun AddStopSearchTab(
                 is AddStopUi.Locating -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                is AddStopUi.Loaded -> StopList(stops = state.stops, onAdd = onAdd)
+                is AddStopUi.Loaded -> StopList(stops = state.stops, origin = state.origin, onAdd = onAdd)
                 is AddStopUi.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("No stops found near this location")
                 }

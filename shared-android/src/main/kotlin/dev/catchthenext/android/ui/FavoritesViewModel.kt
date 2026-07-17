@@ -86,6 +86,13 @@ class FavoritesViewModel(
         }
     }
 
+    /** Persists a manual order: stamps each stop's sortOrder with its position in [stops]. */
+    fun saveOrder(stops: List<Stop>) {
+        viewModelScope.launch(ioDispatcher) {
+            favoritesManager.saveFavorites(stops.mapIndexed { index, stop -> stop.copy(sortOrder = index) })
+        }
+    }
+
     fun toggleUnit() {
         viewModelScope.launch(ioDispatcher) {
             val next = if (distanceUnit.value == DistanceUnit.MILES) DistanceUnit.KM else DistanceUnit.MILES

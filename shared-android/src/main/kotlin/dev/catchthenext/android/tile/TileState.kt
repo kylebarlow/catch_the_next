@@ -128,13 +128,13 @@ fun groupDepartures(
     val showStopTag = stops.size > 1
     return stops.sortedBy { it.distanceMeters }.flatMap { swd ->
         swd.departures
-            .filter(filter)
+            .filter { filter(it) && swd.stop.showsRoute(it.routeShortName) }
             .groupBy { it.routeShortName to it.headsign }
             .map { (key, deps) ->
                 GroupedDeparture(
                     routeShortName = key.first,
                     headsign = key.second,
-                    stopName = swd.stop.stopName,
+                    stopName = swd.stop.displayName,
                     showStopTag = showStopTag,
                     times = deps.map {
                         val mins = it.currentMinutes()
@@ -191,7 +191,12 @@ suspend fun resolveStaleStops(
         if (match != null && match.id != staleStop.id) {
             val idx = updated.indexOfFirst { it.id == staleStop.id }
             if (idx >= 0) {
-                updated[idx] = match
+                // Carry the user's per-favorite settings onto the re-resolved stop.
+                updated[idx] = match.copy(
+                    nickname = staleStop.nickname,
+                    shownRoutes = staleStop.shownRoutes,
+                    sortOrder = staleStop.sortOrder,
+                )
                 anyResolved = true
             }
         }

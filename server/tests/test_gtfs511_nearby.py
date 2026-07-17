@@ -93,3 +93,24 @@ def test_in_bay_area_spot_checks():
         assert feed_mapping.in_bay_area(lat, lon), (lat, lon)
     for lat, lon in outside:
         assert not feed_mapping.in_bay_area(lat, lon), (lat, lon)
+
+
+def test_nearby_includes_routes_served(gtfs511_dir):
+    # stop_times are pruned to the active service window at ingest, so the
+    # fixture needs an in-window service date for routes to be attached.
+    from datetime import date
+    zip_bytes = make_static_gtfs_zip(
+        service_dates=[date.today().strftime("%Y%m%d")], extra_stops_rows=_EXTRA)
+    path = str(gtfs511_dir / "gtfs_511_static.sqlite")
+    static_db.build_static_db(zip_bytes, path)
+    sdb = static_db.open_static_db(path)
+    try:
+        rows = lookup.nearby_stops(sdb, 37.70, -122.40, radius_m=2000, limit=20)
+    finally:
+        sdb.close()
+    by_id = {r["stop_id"]: r for r in rows}
+    # CHILD1 is served by routes 1 and 2; PARENT aggregates its child platform.
+    assert by_id["CHILD1"]["routes_served"] == ["1", "2"]
+    assert by_id["PARENT"]["routes_served"] == ["1", "2"]
+    # NEAR1 has no stop_times in the fixture.
+    assert by_id["NEAR1"]["routes_served"] == []

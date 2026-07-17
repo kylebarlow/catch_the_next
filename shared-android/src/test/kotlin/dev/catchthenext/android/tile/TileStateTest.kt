@@ -576,4 +576,47 @@ class TileStateTest {
         val groups = groupDepartures(ready.stops)
         assertTrue(groups.all { it.showStopTag })
     }
+
+    @Test
+    fun `groupDepartures applies the per-favorite route filter`() {
+        val s = stop(1L, 37.770, -122.410).copy(shownRoutes = listOf("14"))
+        val groups = groupDepartures(listOf(swd(s,
+            depAt("14", "Ferry Plaza", 5),
+            depAt("49", "Caltrain", 10),
+        )))
+        assertEquals(listOf("14"), groups.map { it.routeShortName })
+    }
+
+    @Test
+    fun `groupDepartures shows all routes when no filter is set`() {
+        val s = stop(1L, 37.770, -122.410)
+        val groups = groupDepartures(listOf(swd(s,
+            depAt("14", "Ferry Plaza", 5),
+            depAt("49", "Caltrain", 10),
+        )))
+        assertEquals(2, groups.size)
+    }
+
+    @Test
+    fun `groupDepartures uses the nickname as the stop name`() {
+        val s = stop(1L, 37.770, -122.410).copy(nickname = "Work → home")
+        val groups = groupDepartures(listOf(swd(s, depAt("14", "Ferry Plaza", 5))))
+        assertEquals("Work → home", groups[0].stopName)
+    }
+
+    @Test
+    fun `resolveStaleStops preserves nickname filter and order on the replacement stop`() = runTest {
+        val stale = stop(1L, 37.770, -122.410)
+            .copy(nickname = "Home", shownRoutes = listOf("14"), sortOrder = 2)
+        val resolved = Stop(99L, "S1", "Stop 1", 37.770, -122.410, onestopId = "s-99")
+        val ready = TileState.Ready(
+            stops = listOf(StopWithDepartures(stale, 0.0, emptyList(), isStale = true)),
+            fetchedAt = 0L,
+        )
+        val updated = resolveStaleStops(ready, listOf(stale)) { _, _ -> listOf(resolved) }!!
+        assertEquals("Home", updated[0].nickname)
+        assertEquals(listOf("14"), updated[0].shownRoutes)
+        assertEquals(2, updated[0].sortOrder)
+        assertEquals(99L, updated[0].id)
+    }
 }

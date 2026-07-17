@@ -225,7 +225,7 @@ _STOPS_GRID_CACHE_TTL = _cfg["STOPS_GRID_CACHE_TTL"]
 
 
 def _shape_local_stop(row) -> dict | None:
-    """Shape a local 511 static-DB stop row into the 13-key stop dict, or None
+    """Shape a local 511 static-DB stop row into the 14-key stop dict, or None
     if it can't be assigned a synthetic onestop_id."""
     onestop_id = _make_synthetic_onestop_id(gtfs511.REGIONAL_FEED_ID, row["stop_id"])
     if onestop_id is None:
@@ -245,6 +245,7 @@ def _shape_local_stop(row) -> dict | None:
         "use_without_attribution": bool(meta.get("use_without_attribution")),
         "license_spdx": meta.get("license_spdx"),
         "license_url": meta.get("license_url"),
+        "routes_served": row.get("routes_served") or [],
     }
 
 
@@ -315,6 +316,7 @@ def get_stops(lat, lon, radius=500, limit=20, scope=SCOPE_FULL):
             "use_without_attribution": use_without in ("yes", True, "true"),
             "license_spdx": license_info.get("spdx_identifier"),
             "license_url": license_info.get("url"),
+            "routes_served": _routes_from_route_stops(s.get("route_stops")),
             "_dist_m": dist,
         })
 
@@ -326,6 +328,21 @@ def get_stops(lat, lon, radius=500, limit=20, scope=SCOPE_FULL):
     # with slack; at radius=5000 the cap can miss boundary stops within ~141m
     # of the edge.
     return {"stops": stops}
+
+
+def _routes_from_route_stops(route_stops) -> list:
+    """Distinct route short names from a Transitland stop's route_stops array.
+
+    Transitland's /stops response includes route_stops by default; tolerate its
+    absence (older cache entries, trimmed responses) by returning [].
+    """
+    names = set()
+    for rs in route_stops or []:
+        route = (rs or {}).get("route") or {}
+        name = route.get("route_short_name") or route.get("route_long_name") or ""
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    return sorted(names)
 
 
 def _resolve_translation(arr):

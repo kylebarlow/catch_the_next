@@ -318,7 +318,7 @@ def test_get_stops_local_bay_area_path(monkeypatch):
         "id", "stop_id", "stop_name", "lat", "lon", "onestop_id",
         "feed_onestop_id", "feed_name", "attribution_text",
         "attribution_instructions", "use_without_attribution",
-        "license_spdx", "license_url",
+        "license_spdx", "license_url", "routes_served",
     }
     assert s["onestop_id"] == "511:f-sf~bay~area~rg:CHILD1"
     assert s["id"] < 0  # negative stable synthetic id

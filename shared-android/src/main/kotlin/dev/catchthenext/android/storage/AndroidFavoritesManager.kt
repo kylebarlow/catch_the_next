@@ -7,6 +7,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.reflect.TypeToken
 import dev.catchthenext.json.AppJson
 import dev.catchthenext.model.Stop
+import dev.catchthenext.model.inFavoriteOrder
 import dev.catchthenext.storage.FavoritesManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -22,7 +23,7 @@ class AndroidFavoritesManager(private val context: Context) : FavoritesManager {
     override fun favoritesFlow(): Flow<List<Stop>> = context.dataStore.data.map { prefs ->
         val json = prefs[FAVORITES_KEY] ?: return@map emptyList()
         val type = object : TypeToken<List<Stop>>() {}.type
-        runCatching { gson.fromJson<List<Stop>>(json, type) }.getOrNull() ?: emptyList()
+        (runCatching { gson.fromJson<List<Stop>>(json, type) }.getOrNull() ?: emptyList()).inFavoriteOrder()
     }
 
     private fun getFavoritesJson(): String? = runBlocking {
@@ -34,7 +35,7 @@ class AndroidFavoritesManager(private val context: Context) : FavoritesManager {
     override fun getFavorites(): List<Stop> {
         val json = getFavoritesJson() ?: return emptyList()
         val type = object : TypeToken<List<Stop>>() {}.type
-        return gson.fromJson(json, type) ?: emptyList()
+        return (gson.fromJson<List<Stop>>(json, type) ?: emptyList()).inFavoriteOrder()
     }
 
     override fun saveFavorites(stops: List<Stop>) = runBlocking {

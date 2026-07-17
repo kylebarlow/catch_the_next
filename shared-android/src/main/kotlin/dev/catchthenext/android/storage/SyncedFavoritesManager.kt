@@ -3,6 +3,7 @@ package dev.catchthenext.android.storage
 import dev.catchthenext.android.sync.FavoriteEntry
 import dev.catchthenext.android.sync.SyncStateStore
 import dev.catchthenext.model.Stop
+import dev.catchthenext.model.inFavoriteOrder
 import dev.catchthenext.storage.FavoritesManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -10,11 +11,30 @@ import kotlinx.coroutines.flow.map
 class SyncedFavoritesManager(private val store: SyncStateStore) : FavoritesManager {
 
     override fun favoritesFlow(): Flow<List<Stop>> = store.flow().map { state ->
-        state.items.values.filter { !it.tombstone }.mapNotNull { it.stop }
+        state.items.values.filter { !it.tombstone }.mapNotNull { it.stop }.inFavoriteOrder()
     }
 
     override fun getFavorites(): List<Stop> =
-        store.readBlocking().items.values.filter { !it.tombstone }.mapNotNull { it.stop }
+        store.readBlocking().items.values.filter { !it.tombstone }.mapNotNull { it.stop }.inFavoriteOrder()
+
+    // Bumps only the touched entry's clock (the default rewrites every entry via saveFavorites).
+    override fun updateFavorite(stop: Stop) {
+        val id = stop.onestopId ?: return super.updateFavorite(stop)
+        store.updateBlocking { state ->
+            val entry = state.items[id]
+            if (entry == null || entry.tombstone) return@updateBlocking state
+            val nodeId = store.awaitNodeIdBlocking()
+            val counter = state.myCounter + 1
+            state.copy(
+                myCounter = counter,
+                items = state.items + (id to entry.copy(
+                    stop = stop,
+                    authorNodeId = nodeId,
+                    authorCounter = counter,
+                ))
+            )
+        }
+    }
 
     override fun addFavorite(stop: Stop) {
         val id = stop.onestopId ?: return

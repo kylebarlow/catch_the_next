@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
 sealed interface AddStopUi {
     object PermissionNeeded : AddStopUi
     object Locating : AddStopUi
-    data class Loaded(val stops: List<Stop>) : AddStopUi
+    data class Loaded(val stops: List<Stop>, val origin: LatLon? = null) : AddStopUi
     object Empty : AddStopUi
     data class Error(val msg: String) : AddStopUi
 }
@@ -53,7 +53,7 @@ class AddStopViewModel(
     private suspend fun loadStopsAt(latLon: LatLon, radiusMeters: Int) {
         _ui.value = runCatching {
             val stops = getNearbyStops(latLon.lat, latLon.lon, radiusMeters)
-            if (stops.isEmpty()) AddStopUi.Empty else AddStopUi.Loaded(stops)
+            if (stops.isEmpty()) AddStopUi.Empty else AddStopUi.Loaded(stops, origin = latLon)
         }.getOrElse { AddStopUi.Error(it.toNetworkMessage()) }
     }
 

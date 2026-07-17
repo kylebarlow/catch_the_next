@@ -22,6 +22,13 @@ sealed interface DetailsUi {
             (listOfNotNull(stop.feed) + departures.mapNotNull { it.feed })
                 .distinctBy { it.feedOnestopId }
                 .mapNotNull { it.feedName ?: it.feedOnestopId }
+
+        /** Route short names available at this stop, for the per-favorite filter editor. */
+        fun availableRoutes(): List<String> =
+            (departures.map { it.routeShortName } + stop.routesServed.orEmpty() + stop.shownRoutes.orEmpty())
+                .filter { it.isNotBlank() }
+                .distinct()
+                .sorted()
     }
     data class Error(val msg: String) : DetailsUi
 }
@@ -57,11 +64,31 @@ class StopDetailsViewModel(
         val current = _ui.value as? DetailsUi.Loaded ?: return
         viewModelScope.launch(ioDispatcher) {
             if (current.isFavorite) {
-                favoritesManager.removeFavorite(current.stop.onestopId ?: "")
+                favoritesManager.removeFavorite(current.stop)
             } else {
                 favoritesManager.addFavorite(current.stop)
             }
             _ui.value = current.copy(isFavorite = !current.isFavorite)
+        }
+    }
+
+    /** Persists the per-favorite route filter. Null or empty = show all routes. */
+    fun setShownRoutes(routes: List<String>?) {
+        updateStop { it.copy(shownRoutes = routes?.takeIf { r -> r.isNotEmpty() }) }
+    }
+
+    /** Persists the favorite's nickname. Null or blank = use the GTFS stop name. */
+    fun setNickname(nickname: String?) {
+        updateStop { it.copy(nickname = nickname?.trim()?.takeIf { n -> n.isNotEmpty() }) }
+    }
+
+    private fun updateStop(transform: (Stop) -> Stop) {
+        val current = _ui.value as? DetailsUi.Loaded ?: return
+        val updated = transform(current.stop)
+        _ui.value = current.copy(stop = updated)
+        if (!current.isFavorite) return
+        viewModelScope.launch(ioDispatcher) {
+            favoritesManager.updateFavorite(updated)
         }
     }
 }

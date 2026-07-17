@@ -25,7 +25,56 @@ These are the features where "I've taken this trip 100 times" changes what the
 UI should be. They are the app's identity; competitors are weakest here because
 they optimize for first-time trips.
 
-### 1.1 Route/direction filtering per favorite
+> **Batches 2 & 3 (1.1, 2.6, 1.2, 1.4) — DONE (2026-07-17).** Summary of what
+> shipped:
+> - `Stop` gained four optional fields — `routesServed`, `nickname`,
+>   `shownRoutes`, `sortOrder` — all nullable so stored favorites JSON and the
+>   watch sync payload stay backward compatible. Personal fields survive
+>   stale-stop re-resolution (`resolveStaleStops` copies them onto the
+>   replacement stop).
+> - **1.1**: `groupDepartures` now drops departures not in the favorite's
+>   `shownRoutes` (null/empty = show all), so the phone list, both widgets, and
+>   the wear tile all inherit the filter. Editor: FilterList icon in stop
+>   details (checkbox dialog; all-checked stores null so new routes stay
+>   visible). Persisted via new `FavoritesManager.updateFavorite` (default impl
+>   in the interface; `SyncedFavoritesManager` overrides to bump only the
+>   touched entry's logical clock).
+> - **2.6**: server attaches `routes_served` to nearby-stop responses — local
+>   511 path via a per-stop static-DB query (parents aggregate child
+>   platforms), Transitland path from `route_stops`. `StopList` now shows
+>   distance from search origin + routes served.
+> - **1.4**: nickname (rename dialog in stop details, favorite row shows
+>   nickname headline / GTFS name as supporting text) and manual order (drag
+>   handle on favorite rows; order stamped into `sortOrder`, favorites getters
+>   sort via `inFavoriteOrder()` in both managers). Both sync to the watch
+>   automatically since the whole `Stop` is the sync payload.
+> - **1.2**: both Glance widgets now render real departures (route + colored
+>   live/scheduled countdowns + freshness label) instead of a bus emoji;
+>   resized 1x1 → 3x2. `FavoriteStopWidget` fetches its configured stop through
+>   the shared batch-fetch/cache helper; `ClosestFavoriteWidget` reuses
+>   `departuresPipeline.computeState`. Refresh: `WidgetRefreshWorker`
+>   (WorkManager, 15 min, scheduled in `PhoneApp`) + a "↻" corner tap; whole-
+>   widget tap still starts Live Update tracking.
+> - Also fixed along the way: `StopDetailsViewModel.toggleFavorite` now uses
+>   the stop-based `removeFavorite` (the null-`onestopId` bug flagged in the
+>   batch-1 notes).
+>
+> Lessons learned / gotchas for later batches:
+> - The 511 static DB **prunes stop_times to the active service window at
+>   ingest**, so any test needing routes-at-a-stop must build the fixture with
+>   an in-window service date (2099 rows vanish silently).
+> - `test_proxy.py` pins the exact key set of the local stop shape — adding a
+>   response field means updating that test (now 14 keys).
+> - Glance widgets: load data in `provideGlance` *before* `provideContent`;
+>   `update()`/`updateAll()` re-runs the whole `provideGlance`, which is what
+>   the refresh worker and the ↻ action rely on.
+> - Reordering favorites lives in a screen-local list during the drag (synced
+>   from the store when idle) because DataStore writes round-trip async and
+>   would fight the gesture.
+> - `DockerIntegrationTest` still fails without the docker server (pre-
+>   existing, unrelated).
+
+### 1.1 Route/direction filtering per favorite ✅ DONE
 
 **The single most valuable feature for this product.** A regular rider at a
 busy stop (Muni/AC Transit trunk stops serve 5+ lines, both directions) cares
@@ -44,7 +93,7 @@ stop is shown, so the signal is buried in a wall of cards.
 This is Transit's "pinned lines" feature, but it fits this app even better:
 for a known trip, the filter is set once and never touched again.
 
-### 1.2 Widgets that show departure times
+### 1.2 Widgets that show departure times ✅ DONE
 
 `FavoriteStopWidget` currently shows a bus emoji and the stop name — it's a
 launcher shortcut, not a widget. For a habitual rider, a glanceable home-screen
@@ -78,7 +127,7 @@ all there.
   factor is fine for a stop the user walks to every day, and a per-favorite
   "walk time override" setting covers edge cases (crossing a highway, etc.).
 
-### 1.4 Nicknames and manual ordering for favorites
+### 1.4 Nicknames and manual ordering for favorites ✅ DONE
 
 For known trips, GTFS names are noise: "Market St & 4th St" means nothing;
 "Work → home" means everything.
@@ -173,7 +222,7 @@ link's last segment parses as `Long`; a onestop-style string id is consumed
 and silently discarded. Either resolve onestop ids to the internal stop id or
 stop emitting such links.
 
-### 2.6 Stop pickers show only names
+### 2.6 Stop pickers show only names ✅ DONE
 
 The nearby/search result list (`StopList`) shows just a stop name. Two
 same-named stops on opposite sides of the street are indistinguishable. Add:
@@ -239,7 +288,7 @@ not a choice between two values. Use a `SegmentedButton` (M3) instead. Minor.
 | Batch | Items | Rationale |
 |-------|-------|-----------|
 | 1 ✅ | 2.1, 2.2, 2.3, 1.5 | **DONE 2026-07-17.** Small, contained in `phone/` + shared UI; fixes everything that feels broken and un-hides tracking |
-| 2 | 1.1, 2.6 | Route filter + routes-served metadata share one backend change; highest product value |
-| 3 | 1.2, 1.4 | Widget rework and nickname/order, both riding on the filter/sync work from batch 2 |
+| 2 ✅ | 1.1, 2.6 | **DONE 2026-07-17.** Route filter + routes-served metadata share one backend change; highest product value |
+| 3 ✅ | 1.2, 1.4 | **DONE 2026-07-17.** Widget rework and nickname/order, both riding on the filter/sync work from batch 2 |
 | 4 | 1.3, 3.2, 2.4 | Leave-by nudges and alert surfacing build on the tracking service |
 | 5 | 3.1, 3.3, 3.4, 2.5 | Polish |
