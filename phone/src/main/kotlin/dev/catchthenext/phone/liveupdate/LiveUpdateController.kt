@@ -30,6 +30,7 @@ class LiveUpdateController(
             startedAt = System.currentTimeMillis(),
             firstDepartureEtaEpochMs = null,
             gotWithin100m = false,
+            walkMinutesOverride = stop.walkMinutesOverride,
         )
         scope.launch { store.save(state) }
         val intent = Intent(ctx, LiveUpdateService::class.java).apply {
@@ -38,6 +39,7 @@ class LiveUpdateController(
             putExtra(LiveUpdateService.EXTRA_STOP_NAME, state.stopName)
             putExtra(LiveUpdateService.EXTRA_STOP_LAT, state.stopLat)
             putExtra(LiveUpdateService.EXTRA_STOP_LON, state.stopLon)
+            state.walkMinutesOverride?.let { putExtra(LiveUpdateService.EXTRA_WALK_MINUTES_OVERRIDE, it) }
         }
         ContextCompat.startForegroundService(ctx, intent)
     }

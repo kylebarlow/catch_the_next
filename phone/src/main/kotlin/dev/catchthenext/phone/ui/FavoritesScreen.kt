@@ -3,7 +3,7 @@ package dev.catchthenext.phone.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,7 +14,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.dp
@@ -122,7 +121,8 @@ fun FavoritesScreen(navController: NavController, viewModel: FavoritesViewModel)
                             distanceLabel = location?.let { loc ->
                                 formatDistance(haversineMeters(loc.lat, loc.lon, stop.lat, stop.lon), unit)
                             },
-                            hasAlert = alertsByStopId[stop.id].orEmpty().isNotEmpty(),
+                            alertHeadline = alertsByStopId[stop.id].orEmpty()
+                                .firstOrNull()?.headerText?.takeIf { it.isNotBlank() },
                             onOpen = { navController.navigate("details/${stop.id}") },
                             onOpenAlerts = { navController.navigate("alerts/${stop.id}") },
                             onRemove = {
@@ -187,7 +187,7 @@ private fun List<Stop>.swapped(a: Int, b: Int): List<Stop> =
 private fun FavoriteRow(
     stop: Stop,
     distanceLabel: String?,
-    hasAlert: Boolean,
+    alertHeadline: String?,
     onOpen: () -> Unit,
     onOpenAlerts: () -> Unit,
     onRemove: () -> Unit,
@@ -219,32 +219,34 @@ private fun FavoriteRow(
         },
     ) {
         // Nickname (when set) is the headline; the GTFS name drops to supporting text.
+        // The alert headline (when present) is shown as its own line, tap to expand.
         val supporting = listOfNotNull(
             stop.stopName.takeIf { stop.nickname != null },
             distanceLabel,
         ).joinToString(" · ")
         ListItem(
             headlineContent = { Text(stop.displayName) },
-            supportingContent = supporting.takeIf { it.isNotEmpty() }?.let { { Text(it) } },
-            trailingContent = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (hasAlert) {
-                        IconButton(onClick = onOpenAlerts) {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = "Service alert",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
+            supportingContent = {
+                Column {
+                    if (supporting.isNotEmpty()) Text(supporting)
+                    alertHeadline?.let { headline ->
+                        Text(
+                            text = headline,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable(onClick = onOpenAlerts),
+                        )
                     }
-                    Icon(
-                        imageVector = Icons.Default.DragHandle,
-                        contentDescription = "Reorder",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = dragHandleModifier,
-                    )
                 }
+            },
+            trailingContent = {
+                Icon(
+                    imageVector = Icons.Default.DragHandle,
+                    contentDescription = "Reorder",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = dragHandleModifier,
+                )
             },
             modifier = Modifier
                 .fillMaxWidth()

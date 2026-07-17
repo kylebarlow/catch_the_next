@@ -16,6 +16,8 @@ data class Stop(
     val shownRoutes: List<String>? = null,
     /** Manual position among favorites; null = unordered (sorts after ordered entries). */
     val sortOrder: Int? = null,
+    /** Manual walk-time override in minutes for "leave now" nudges; null = estimate from distance. */
+    val walkMinutesOverride: Int? = null,
 ) {
     val displayName: String get() = nickname?.takeIf { it.isNotBlank() } ?: stopName
 

@@ -13,10 +13,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -75,14 +77,19 @@ fun SettingsScreen(navController: NavController, viewModel: SettingsViewModel) {
         Column(Modifier.fillMaxSize().padding(padding)) {
             ListItem(
                 headlineContent = { Text("Distance unit") },
-                supportingContent = { Text(if (unit == DistanceUnit.MILES) "Miles" else "Kilometers") },
                 trailingContent = {
-                    Switch(
-                        checked = unit == DistanceUnit.MILES,
-                        onCheckedChange = {
-                            viewModel.setUnit(if (it) DistanceUnit.MILES else DistanceUnit.KM)
-                        }
-                    )
+                    SingleChoiceSegmentedButtonRow {
+                        SegmentedButton(
+                            selected = unit == DistanceUnit.MILES,
+                            onClick = { viewModel.setUnit(DistanceUnit.MILES) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        ) { Text("Miles") }
+                        SegmentedButton(
+                            selected = unit == DistanceUnit.KM,
+                            onClick = { viewModel.setUnit(DistanceUnit.KM) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        ) { Text("Kilometers") }
+                    }
                 }
             )
             HorizontalDivider()

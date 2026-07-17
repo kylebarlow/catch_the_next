@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.AlertDialog
@@ -52,6 +53,7 @@ fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewMo
 
     var showRenameDialog by remember { mutableStateOf(false) }
     var showFilterDialog by remember { mutableStateOf(false) }
+    var showWalkTimeDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -71,6 +73,9 @@ fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewMo
                             IconButton(onClick = { showFilterDialog = true }) {
                                 Icon(Icons.Default.FilterList, contentDescription = "Filter routes")
                             }
+                        }
+                        IconButton(onClick = { showWalkTimeDialog = true }) {
+                            Icon(Icons.Default.DirectionsWalk, contentDescription = "Walk time")
                         }
                     }
                 },
@@ -168,6 +173,58 @@ fun StopDetailsScreen(navController: NavController, viewModel: StopDetailsViewMo
             },
         )
     }
+
+    if (showWalkTimeDialog && loaded != null) {
+        WalkTimeDialog(
+            currentMinutes = loaded.stop.walkMinutesOverride,
+            onDismiss = { showWalkTimeDialog = false },
+            onSave = { minutes ->
+                viewModel.setWalkMinutesOverride(minutes)
+                showWalkTimeDialog = false
+            },
+        )
+    }
+}
+
+/**
+ * Overrides the distance-based walk-time estimate used for "leave now" nudges — useful when
+ * the straight-line estimate is wrong (crossing a highway, an indirect path, etc).
+ */
+@Composable
+private fun WalkTimeDialog(
+    currentMinutes: Int?,
+    onDismiss: () -> Unit,
+    onSave: (Int?) -> Unit,
+) {
+    var text by remember { mutableStateOf(currentMinutes?.toString() ?: "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Walk time to stop") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it.filter { c -> c.isDigit() } },
+                    label = { Text("Minutes") },
+                    placeholder = { Text("Estimated from distance") },
+                    singleLine = true,
+                )
+                Text(
+                    text = "Overrides the distance-based estimate used for \"leave now\" alerts. " +
+                        "Leave empty to estimate automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(text.toIntOrNull()) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

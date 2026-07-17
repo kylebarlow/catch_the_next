@@ -9,6 +9,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +40,7 @@ import dev.catchthenext.phone.ui.AddStopScreen
 import dev.catchthenext.phone.ui.AppTheme
 import dev.catchthenext.phone.ui.DeparturesScreen
 import dev.catchthenext.phone.ui.FavoritesScreen
+import dev.catchthenext.phone.ui.IntroScreen
 import dev.catchthenext.phone.ui.SettingsScreen
 import dev.catchthenext.phone.ui.StopAlertsScreen
 import dev.catchthenext.phone.ui.StopConfirmScreen
@@ -45,6 +50,20 @@ class MainActivity : ComponentActivity() {
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { /* DeparturesViewModel re-checks on next state refresh */ }
+
+    private fun requestMissingPermissions() {
+        val missing = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) locationPermissionLauncher.launch(missing.toTypedArray())
+    }
 
     override fun onResume() {
         super.onResume()
@@ -70,22 +89,24 @@ class MainActivity : ComponentActivity() {
             ?.lastPathSegment
             ?.let { PhoneGraph.pendingDeepLinkStopId = it }
 
-        val missing = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        ).apply {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isNotEmpty()) locationPermissionLauncher.launch(missing.toTypedArray())
+        val prefs = getSharedPreferences("first_run", Context.MODE_PRIVATE)
+        val introAlreadySeen = prefs.getBoolean("intro_seen", false)
+        if (introAlreadySeen) requestMissingPermissions()
+
         setContent {
             val factory = PhoneViewModelFactory(applicationContext)
+            var showIntro by remember { mutableStateOf(!introAlreadySeen) }
             AppTheme {
-                val navController = rememberNavController()
-                PhoneNavGraph(navController, factory)
+                if (showIntro) {
+                    IntroScreen(onContinue = {
+                        prefs.edit().putBoolean("intro_seen", true).apply()
+                        showIntro = false
+                        requestMissingPermissions()
+                    })
+                } else {
+                    val navController = rememberNavController()
+                    PhoneNavGraph(navController, factory)
+                }
             }
         }
     }
@@ -94,11 +115,16 @@ class MainActivity : ComponentActivity() {
 @androidx.compose.runtime.Composable
 private fun PhoneNavGraph(navController: NavHostController, factory: PhoneViewModelFactory) {
     // Consume any pending deep link (e.g. from a Live Update notification tap)
+    val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        PhoneGraph.pendingDeepLinkStopId?.let { onestopId ->
+        PhoneGraph.pendingDeepLinkStopId?.let { deepLinkId ->
             PhoneGraph.pendingDeepLinkStopId = null
-            // onestopId may be a Long stopId or an onestop string; try Long first
-            val stopId = onestopId.toLongOrNull()
+            // deepLinkId may be a Long stopId or an onestop string; try Long first, else
+            // resolve the onestop id against favorites (the only stops we can look up
+            // without a network round trip).
+            val stopId = deepLinkId.toLongOrNull()
+                ?: PhoneGraph.favoritesManager(context).getFavorites()
+                    .firstOrNull { it.onestopId == deepLinkId }?.id
             if (stopId != null) {
                 navController.navigate("details/$stopId")
             }

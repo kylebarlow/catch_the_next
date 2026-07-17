@@ -82,6 +82,11 @@ class StopDetailsViewModel(
         updateStop { it.copy(nickname = nickname?.trim()?.takeIf { n -> n.isNotEmpty() }) }
     }
 
+    /** Persists a manual walk-time override (minutes) for "leave now" nudges. Null = estimate from distance. */
+    fun setWalkMinutesOverride(minutes: Int?) {
+        updateStop { it.copy(walkMinutesOverride = minutes) }
+    }
+
     private fun updateStop(transform: (Stop) -> Stop) {
         val current = _ui.value as? DetailsUi.Loaded ?: return
         val updated = transform(current.stop)

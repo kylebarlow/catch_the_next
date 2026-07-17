@@ -111,7 +111,7 @@ known, only the number matters.
   widget that also launches tracking in one tap is a genuinely competitive
   surface.
 
-### 1.3 "Leave now" nudges
+### 1.3 "Leave now" nudges ✅ DONE
 
 The inverse of the existing geofence logic is the feature habitual riders
 actually want: *"leave in 4 min to catch the 33."* `LiveUpdateService` already
@@ -208,14 +208,14 @@ Only "12 mins" is shown. For planning a known trip, the clock time matters
 (`displayDepartureTime`) is already in the model. Consider a per-user setting
 if the extra text feels noisy on the wear tile.
 
-### 2.4 Configurable departure window
+### 2.4 Configurable departure window ✅ DONE
 
 `ReadyContent` hard-codes `currentMinutes() in 0..59`. Habitual riders of
 infrequent lines (ferries, commuter buses that run every 40–60 min) will see
 an empty screen. Make the window a setting or simply extend to 90–120 min with
 absolute times (2.3) so the longer horizon stays readable.
 
-### 2.5 Deep-link handler drops non-numeric ids
+### 2.5 Deep-link handler drops non-numeric ids ✅ DONE
 
 `MainActivity` (`PhoneNavGraph` LaunchedEffect) only navigates when the deep
 link's last segment parses as `Long`; a onestop-style string id is consumed
@@ -239,7 +239,53 @@ returns here.
 
 ## Priority 3 — polish and hygiene
 
-### 3.1 First-run experience
+> **Batches 4 & 5 (1.3, 3.2, 2.4, 3.1, 3.4, 2.5) — DONE (2026-07-17).** 3.3
+> deferred — see its entry below. Summary of what shipped:
+> - `Stop` gained a fifth optional field, `walkMinutesOverride: Int?`, edited
+>   from a new walk-icon button in stop details (`WalkTimeDialog`) and synced
+>   like the other per-favorite fields.
+> - **1.3**: `LiveUpdateService.runTracking` now tracks live distance from the
+>   `locationJob`, estimates `walkMinutes` (override, else `distance / 80
+>   m-per-min`), and computes `leaveByEpochMs` for the ongoing notification's
+>   new "Leave by 3:38" line. When `eta - walkMinutes` drops to ≤2 min slack it
+>   posts a one-shot heads-up notification on a **new, separate**
+>   `leave_now_v1` channel (own sound) — the ongoing tracking channel stays
+>   silent by design (`setOnlyAlertOnce`), so escalation needed its own channel
+>   rather than fighting that.
+> - **3.2**: `GroupedDeparture` gained `alertHeadline: String?` (first active
+>   alert's header). Departure cards and favorite rows show it as a red
+>   single-line, tap-to-open-alerts row. `LiveUpdateService`'s 60s refresh now
+>   also pulls `stopResult.alerts` and prepends the headline to the Live Update
+>   notification body.
+> - **2.4**: window extended from 60 to 120 min (the doc's "simply extend"
+>   alternative) rather than a new setting — absolute clock times (2.3) already
+>   make the longer horizon readable, so a setting would add UI for little gain.
+> - **3.1**: new `IntroScreen` composable shown once (flag in a plain
+>   `SharedPreferences`, not DataStore — one-shot boolean, no need for a Flow);
+>   permission request moved out of `onCreate` into a `requestMissingPermissions()`
+>   called either immediately (returning user) or from the intro's Continue
+>   button (first run). `TileState.NoFavorites` now navigates straight to
+>   `"add"` instead of `"favorites"`.
+> - **3.4**: `SegmentedButton`/`SingleChoiceSegmentedButtonRow` (M3) replaced
+>   the Miles/Kilometers `Switch`.
+> - **2.5**: the deep-link `LaunchedEffect` in `MainActivity` now falls back to
+>   matching the onestop-id string against `favoritesManager.getFavorites()`
+>   when it isn't a bare `Long` — no network round trip, so it only resolves
+>   links pointing at an existing favorite (the only kind the app currently
+>   emits, from the Live Update notification tap).
+>
+> Lessons learned / gotchas:
+> - Gradle module task names are flavor-qualified here (`play`/`fdroid`), not
+>   plain `compileDebugKotlin` — use e.g. `:phone:compileFdroidDebugKotlin`.
+> - A notification channel's sound/importance is fixed at creation and can't
+>   be changed later without a new channel id — that's *why* the leave-now
+>   nudge needed its own channel instead of reusing the silent tracking one.
+> - `by remember { mutableStateOf(...) }` needs `androidx.compose.runtime.getValue`
+>   / `.setValue` imported (not just `remember`/`mutableStateOf`) or the `by`
+>   delegate fails to resolve — easy to miss when adding a first `var ... by`
+>   to a file that only had `val ... by collectAsState()` before.
+
+### 3.1 First-run experience ✅ DONE
 
 Cold start immediately fires the location+notification permission dialogs onto
 an empty screen. A single intro panel ("Shows departures near your saved
@@ -247,7 +293,7 @@ stops — needs location") before the system dialog improves grant rates, and
 the empty Departures state should offer an "Add a stop" button directly rather
 than routing through the Favorites tab.
 
-### 3.2 Alerts are buried
+### 3.2 Alerts are buried ✅ DONE
 
 An alert is a 16 dp warning icon; the text is two taps away. For a known trip,
 the alert is often the *only* new information ("N delayed 20 min"). Show the
@@ -255,7 +301,7 @@ alert headline as a single line on the affected departure card / favorite row;
 tap to expand. Consider including the headline in the Live Update notification
 when the tracked stop has an active alert.
 
-### 3.3 Vehicle position during tracking (stretch)
+### 3.3 Vehicle position during tracking (stretch) — NOT DONE, deferred
 
 511 GTFS-RT includes vehicle positions. A countdown that jumps from 5 min to
 9 min feels broken; "the bus is at 24th St" explains itself. Even a text line
@@ -263,7 +309,29 @@ when the tracked stop has an active alert.
 required — would make tracking dramatically more trustworthy. A small static
 map is optional and should stay subordinate to the notification surface.
 
-### 3.4 Distance-unit control
+**Deferred by explicit choice on 2026-07-17** — scoped out during batch 4/5 as
+disproportionate to the other five items combined. What it actually requires,
+for whoever picks this up:
+
+- Server: a `download_vehiclepositions()` fetcher (`gtfs511/download.py`,
+  mirrors `download_tripupdates()`), a new `rt_vehicle_positions` table parsed
+  in `rt_db.build_rt_db` (trip_id, current_stop_sequence, current_status,
+  vehicle timestamp), and wiring into `api.py`'s `_download_rt_data`/`_build_rt`
+  refresh cycle.
+- A lookup (`gtfs511/lookup.py`) that resolves a trip via
+  `rt_trip_stop_times` (route + headsign → trip_id) and computes stops-away
+  from `target_stop_sequence - current_stop_sequence`.
+- **Don't thread this through the existing departures endpoint** — its
+  19-field shape (`lookup._DEPARTURE_FIELDS`) is pinned by `test_proxy.py` and
+  shared by both the local-511 and Transitland-parity paths; Transitland has
+  no equivalent field to backfill. A small dedicated endpoint (e.g.
+  `/api/v2/rest/vehicle_status?feed=&stop_id=&route_short_name=&headsign=`)
+  keeps the departures contract untouched.
+- Client: a `TransitlandClient` call, then plumb into `LiveUpdateService`
+  (polled like the existing 60s departures refresh) and a new line in
+  `LiveUpdateNotificationBuilder`.
+
+### 3.4 Distance-unit control ✅ DONE
 
 Settings uses a `Switch` labeled "Miles/Kilometers" — a switch implies on/off,
 not a choice between two values. Use a `SegmentedButton` (M3) instead. Minor.
@@ -290,5 +358,5 @@ not a choice between two values. Use a `SegmentedButton` (M3) instead. Minor.
 | 1 ✅ | 2.1, 2.2, 2.3, 1.5 | **DONE 2026-07-17.** Small, contained in `phone/` + shared UI; fixes everything that feels broken and un-hides tracking |
 | 2 ✅ | 1.1, 2.6 | **DONE 2026-07-17.** Route filter + routes-served metadata share one backend change; highest product value |
 | 3 ✅ | 1.2, 1.4 | **DONE 2026-07-17.** Widget rework and nickname/order, both riding on the filter/sync work from batch 2 |
-| 4 | 1.3, 3.2, 2.4 | Leave-by nudges and alert surfacing build on the tracking service |
-| 5 | 3.1, 3.3, 3.4, 2.5 | Polish |
+| 4 ✅ | 1.3, 3.2, 2.4 | **DONE 2026-07-17.** Leave-by nudges and alert surfacing build on the tracking service |
+| 5 ✅ | 3.1, 3.4, 2.5 | **DONE 2026-07-17.** Polish. (3.3 deferred — see its entry in Priority 3.) |

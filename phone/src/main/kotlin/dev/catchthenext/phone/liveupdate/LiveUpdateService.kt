@@ -19,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 class LiveUpdateService : Service() {
 
@@ -28,6 +29,14 @@ class LiveUpdateService : Service() {
         const val EXTRA_STOP_NAME = "stop_name"
         const val EXTRA_STOP_LAT = "stop_lat"
         const val EXTRA_STOP_LON = "stop_lon"
+        const val EXTRA_WALK_MINUTES_OVERRIDE = "walk_minutes_override"
+
+        // Rough walking pace (~3mph) used to estimate walk time from straight-line distance
+        // when the user hasn't set a per-favorite override.
+        private const val WALK_METERS_PER_MINUTE = 80.0
+
+        // How much slack (eta minus walk time) triggers the one-shot "leave now" nudge.
+        private const val LEAVE_NOW_SLACK_MINUTES = 2
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -52,6 +61,8 @@ class LiveUpdateService : Service() {
         val stopName = intent?.getStringExtra(EXTRA_STOP_NAME) ?: "Stop"
         val stopLat = intent?.getDoubleExtra(EXTRA_STOP_LAT, 0.0) ?: 0.0
         val stopLon = intent?.getDoubleExtra(EXTRA_STOP_LON, 0.0) ?: 0.0
+        val walkMinutesOverride = intent?.getIntExtra(EXTRA_WALK_MINUTES_OVERRIDE, -1)
+            ?.takeIf { it >= 0 }
 
         if (stopId == -1L) {
             stopSelf()
@@ -67,6 +78,7 @@ class LiveUpdateService : Service() {
             startedAt = System.currentTimeMillis(),
             firstDepartureEtaEpochMs = null,
             gotWithin100m = false,
+            walkMinutesOverride = walkMinutesOverride,
         )
 
         trackingJob?.cancel()
@@ -83,7 +95,10 @@ class LiveUpdateService : Service() {
         val dismissSignal = CompletableDeferred<Unit>()
 
         var cachedDepartures: List<CachedDeparture> = emptyList()
+        var alertHeadline: String? = null
         var lastFetchMs = 0L
+        var distanceMeters: Double? = null
+        var leaveNowEscalated = false
 
         val refreshJob = serviceScope.launch {
             while (!dismissSignal.isCompleted) {
@@ -92,16 +107,21 @@ class LiveUpdateService : Service() {
                     runCatching {
                         val result = client.getDeparturesBatch(listOf(state.onestopId!!))
                         val fetchTime = System.currentTimeMillis()
-                        result[state.onestopId]?.departures?.map { dep ->
+                        val stopResult = result[state.onestopId]
+                        val departures = stopResult?.departures?.map { dep ->
                             CachedDeparture(
                                 dep.routeShortName, dep.headsign,
                                 fetchTime + dep.displayDepartureMinutes * 60_000,
                                 dep.timeSource, dep.agencyName,
                             )
                         }
-                    }.getOrNull()?.let {
-                        cachedDepartures = it.filter { d -> d.currentMinutes() >= 0 }
-                            .sortedBy { d -> d.departureEpochMillis }
+                        departures to stopResult?.alerts?.firstOrNull()?.headerText?.takeIf { it.isNotBlank() }
+                    }.getOrNull()?.let { (departures, headline) ->
+                        if (departures != null) {
+                            cachedDepartures = departures.filter { d -> d.currentMinutes() >= 0 }
+                                .sortedBy { d -> d.departureEpochMillis }
+                        }
+                        alertHeadline = headline
                         lastFetchMs = System.currentTimeMillis()
 
                         if (state.firstDepartureEtaEpochMs == null) {
@@ -112,7 +132,31 @@ class LiveUpdateService : Service() {
                         }
                     }
                 }
-                nm.notify(LIVE_UPDATE_NOTIF_ID, buildLiveUpdateNotification(this@LiveUpdateService, state, cachedDepartures))
+
+                // Walk-time estimate: manual override, else straight-line distance at a fudge-factor pace.
+                val walkMinutes = state.walkMinutesOverride
+                    ?: distanceMeters?.let { (it / WALK_METERS_PER_MINUTE).roundToInt() }
+                val firstEtaMs = state.firstDepartureEtaEpochMs ?: cachedDepartures.firstOrNull()?.departureEpochMillis
+                val leaveByEpochMs = if (walkMinutes != null && firstEtaMs != null) {
+                    firstEtaMs - walkMinutes * 60_000L
+                } else null
+
+                if (!leaveNowEscalated && walkMinutes != null && firstEtaMs != null) {
+                    val etaMinutes = (firstEtaMs - nowMs) / 60_000
+                    val slackMinutes = etaMinutes - walkMinutes
+                    if (slackMinutes <= LEAVE_NOW_SLACK_MINUTES) {
+                        nm.notify(
+                            LEAVE_NOW_NOTIF_ID,
+                            buildLeaveNowNotification(this@LiveUpdateService, state, etaMinutes),
+                        )
+                        leaveNowEscalated = true
+                    }
+                }
+
+                nm.notify(
+                    LIVE_UPDATE_NOTIF_ID,
+                    buildLiveUpdateNotification(this@LiveUpdateService, state, cachedDepartures, alertHeadline, leaveByEpochMs),
+                )
                 delay(30_000L)
             }
         }
@@ -120,6 +164,7 @@ class LiveUpdateService : Service() {
         val locationJob = serviceScope.launch {
             locationUpdates(this@LiveUpdateService, intervalMs = 10_000L).collect { latLon ->
                 val dist = haversineMeters(latLon.lat, latLon.lon, state.stopLat, state.stopLon)
+                distanceMeters = dist
                 if (!state.gotWithin100m && dist <= 100.0) {
                     state = state.copy(gotWithin100m = true)
                     store.save(state)

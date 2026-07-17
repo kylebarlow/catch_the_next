@@ -107,6 +107,7 @@ data class GroupedDeparture(
     val times: List<GroupedDepartureTime>,
     val agencyName: String? = null,
     val hasAlert: Boolean = false,
+    val alertHeadline: String? = null,
     val stop: Stop,
 )
 
@@ -146,6 +147,7 @@ fun groupDepartures(
                     }.sortedBy { it.minutes }.take(maxPerGroup),
                     agencyName = deps.firstOrNull()?.agencyName,
                     hasAlert = swd.alerts.isNotEmpty(),
+                    alertHeadline = swd.alerts.firstOrNull()?.headerText?.takeIf { it.isNotBlank() },
                     stop = swd.stop,
                 )
             }
