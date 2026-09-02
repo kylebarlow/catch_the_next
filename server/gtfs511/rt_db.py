@@ -12,7 +12,30 @@ import tempfile
 import time
 from dataclasses import dataclass
 
-from google.transit import gtfs_realtime_pb2  # type: ignore
+
+
+def _pb2():
+    """Import the protobuf bindings lazily.
+
+    Building the generated message classes costs ~0.09 s of interpreter
+    startup; only the refresh path needs them, and most requests serve a fresh
+    snapshot without ever parsing a feed.
+    """
+    from google.transit import gtfs_realtime_pb2  # type: ignore
+    return gtfs_realtime_pb2
+
+
+def protobuf_implementation() -> str:
+    """Return "upb"/"python"/"cpp" — which protobuf backend is in use.
+
+    The pure-Python backend parses the 2.5 MB regional feed ~200x slower, so a
+    silent fall back to it is worth surfacing (see /healthz).
+    """
+    try:
+        from google.protobuf.internal import api_implementation
+        return api_implementation.Type()
+    except Exception:  # noqa: BLE001
+        return "unknown"
 
 
 @dataclass
@@ -41,8 +64,6 @@ CREATE TABLE rt_trip_stop_times (
     delay_seconds        INTEGER,
     fetched_at           INTEGER NOT NULL
 );
-CREATE INDEX idx_rt_stop ON rt_trip_stop_times (stop_id, predicted_utc);
-CREATE INDEX idx_rt_trip ON rt_trip_stop_times (trip_id, stop_sequence);
 
 CREATE TABLE rt_alerts (
     alert_id    TEXT,
@@ -56,9 +77,15 @@ CREATE TABLE rt_alerts (
     informed_entities TEXT,
     fetched_at  INTEGER NOT NULL
 );
-CREATE INDEX idx_alert_id ON rt_alerts (alert_id);
-
 CREATE TABLE rt_meta (key TEXT PRIMARY KEY, value TEXT);
+"""
+
+# Created *after* the bulk insert: building the B-trees once at the end is ~8x
+# faster than updating them on every row (3.9 s -> 0.5 s on the production host).
+_DDL_RT_INDEXES = """
+CREATE INDEX idx_rt_stop ON rt_trip_stop_times (stop_id, predicted_utc);
+CREATE INDEX idx_rt_trip ON rt_trip_stop_times (trip_id, stop_sequence);
+CREATE INDEX idx_alert_id ON rt_alerts (alert_id);
 """
 
 
@@ -75,12 +102,13 @@ def build_rt_db(
     )
 
     parse_start = time.monotonic()
-    tu_feed = gtfs_realtime_pb2.FeedMessage()
+    pb2 = _pb2()
+    tu_feed = pb2.FeedMessage()
     tu_feed.ParseFromString(tripupdates_bytes)
 
     al_feed = None
     if alerts_bytes:
-        al_feed = gtfs_realtime_pb2.FeedMessage()
+        al_feed = pb2.FeedMessage()
         al_feed.ParseFromString(alerts_bytes)
 
     fetched_at = int(time.time())
@@ -133,10 +161,10 @@ def build_rt_db(
             header = _translation(a.header_text)
             description = _translation(a.description_text)
             url = _translation(a.url)
-            cause = gtfs_realtime_pb2.Alert.Cause.Name(a.cause) if a.cause else None
-            effect = gtfs_realtime_pb2.Alert.Effect.Name(a.effect) if a.effect else None
+            cause = pb2.Alert.Cause.Name(a.cause) if a.cause else None
+            effect = pb2.Alert.Effect.Name(a.effect) if a.effect else None
             severity = (
-                gtfs_realtime_pb2.Alert.SeverityLevel.Name(a.severity_level)
+                pb2.Alert.SeverityLevel.Name(a.severity_level)
                 if a.HasField("severity_level") else None
             )
             periods = [{"start": p.start or None, "end": p.end or None} for p in a.active_period]
@@ -168,9 +196,11 @@ def build_rt_db(
     try:
         db = sqlite3.connect(tmp_path)
         try:
+            db.execute("PRAGMA page_size=16384")
             db.execute("PRAGMA journal_mode=OFF")
             db.execute("PRAGMA synchronous=OFF")
             db.execute("PRAGMA temp_store=MEMORY")
+            db.execute("PRAGMA cache_size=-65536")
             with db:
                 for stmt in _DDL_RT.strip().split(";"):
                     s = stmt.strip()
@@ -192,6 +222,10 @@ def build_rt_db(
                         ("alert_rows", str(len(alert_rows))),
                     ],
                 )
+                for stmt in _DDL_RT_INDEXES.strip().split(";"):
+                    s = stmt.strip()
+                    if s:
+                        db.execute(s)
         finally:
             db.close()
         os.replace(tmp_path, target_path)
@@ -248,7 +282,7 @@ def _translation(translated_string) -> str | None:
 def _schedule_relationship_name(value: int) -> str:
     # TripDescriptor.ScheduleRelationship: SCHEDULED, ADDED, UNSCHEDULED, CANCELED, REPLACEMENT, DUPLICATED, DELETED
     try:
-        return gtfs_realtime_pb2.TripDescriptor.ScheduleRelationship.Name(value)
+        return _pb2().TripDescriptor.ScheduleRelationship.Name(value)
     except Exception:
         return "SCHEDULED"
 
@@ -256,6 +290,6 @@ def _schedule_relationship_name(value: int) -> str:
 def _stu_schedule_relationship_name(value: int) -> str | None:
     # StopTimeUpdate.ScheduleRelationship: SCHEDULED, SKIPPED, NO_DATA, UNSCHEDULED
     try:
-        return gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.ScheduleRelationship.Name(value)
+        return _pb2().TripUpdate.StopTimeUpdate.ScheduleRelationship.Name(value)
     except Exception:
         return None

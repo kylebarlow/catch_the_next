@@ -44,4 +44,5 @@ def gtfs511_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(_api, "STATIC_DB_PATH", str(d / "gtfs_511_static.sqlite"))
     monkeypatch.setattr(_api, "RT_DB_PATH", str(d / "gtfs_511_rt.sqlite"))
     monkeypatch.setattr(_api, "_LOCK_DB_PATH", str(d / "refresh.lock.sqlite"))
+    monkeypatch.setattr(_api, "_ALERTS_CACHE_PATH", str(d / "alerts.pb"))
     return d

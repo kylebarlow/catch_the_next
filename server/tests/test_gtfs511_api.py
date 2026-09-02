@@ -51,17 +51,53 @@ def test_rt_download_failure_is_nonfatal(gtfs511_dir, monkeypatch):
     assert outcome.rt_age_seconds is not None and outcome.rt_age_seconds >= 250
 
 
-def test_static_download_failure_serves_old_db(gtfs511_dir, monkeypatch):
+def test_expired_static_is_served_not_rebuilt(gtfs511_dir, monkeypatch):
+    """An expired static DB must never trigger an in-request rebuild."""
     _build_dbs(gtfs511_dir)
     _backdate(str(gtfs511_dir / "gtfs_511_static.sqlite"), 86400 * 10, "feed_meta")  # stale
     monkeypatch.setattr(download, "download_static_zip",
-                        lambda: (_ for _ in ()).throw(FiveElevenError("nope")))
+                        lambda: (_ for _ in ()).throw(AssertionError("must not download static")))
     monkeypatch.setattr(download, "download_tripupdates",
                         lambda: _dl(make_tripupdates_pb(predicted_epoch=int(time.time()) + 600)))
+    monkeypatch.setattr(download, "download_servicealerts",
+                        lambda: (_ for _ in ()).throw(FiveElevenError("no alerts")))
     outcome = api.refresh_if_stale()
-    assert outcome.static_error is not None
-    assert outcome.static_age_seconds is not None  # old DB still present
+    assert outcome.refreshed_static is False
+    assert outcome.static_error is None
+    assert outcome.static_age_seconds is not None and outcome.static_age_seconds >= 86400 * 10
     assert os.path.isfile(str(gtfs511_dir / "gtfs_511_static.sqlite"))
+
+
+def test_missing_static_is_built_in_request(gtfs511_dir, monkeypatch):
+    monkeypatch.setattr(download, "download_static_zip",
+                        lambda: _dl(make_static_gtfs_zip(service_dates=["20990101"])))
+    monkeypatch.setattr(download, "download_tripupdates",
+                        lambda: _dl(make_tripupdates_pb(predicted_epoch=int(time.time()) + 600)))
+    monkeypatch.setattr(download, "download_servicealerts",
+                        lambda: (_ for _ in ()).throw(FiveElevenError("no alerts")))
+    outcome = api.refresh_if_stale()
+    assert outcome.refreshed_static is True
+    assert os.path.isfile(str(gtfs511_dir / "gtfs_511_static.sqlite"))
+
+
+def test_alerts_are_reused_within_alerts_ttl(gtfs511_dir, monkeypatch):
+    """Alerts have their own longer TTL: the second refresh reuses the cache."""
+    _build_dbs(gtfs511_dir, rt_predicted=int(time.time()) + 600)
+    calls = []
+
+    def _alerts():
+        calls.append(1)
+        return _dl(b"")
+
+    monkeypatch.setattr(download, "download_servicealerts", _alerts)
+    monkeypatch.setattr(download, "download_tripupdates",
+                        lambda: _dl(make_tripupdates_pb(predicted_epoch=int(time.time()) + 600)))
+
+    _backdate(str(gtfs511_dir / "gtfs_511_rt.sqlite"), 300, "rt_meta")
+    api.refresh_if_stale()
+    _backdate(str(gtfs511_dir / "gtfs_511_rt.sqlite"), 300, "rt_meta")
+    api.refresh_if_stale()
+    assert len(calls) == 1
 
 
 def test_rt_build_failure_keeps_old_snapshot(gtfs511_dir, monkeypatch):

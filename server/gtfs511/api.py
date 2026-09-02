@@ -2,10 +2,10 @@
 
 Refresh policy:
 
-  * Static GTFS: rebuilt only when stale (older than FIVE_ELEVEN_STATIC_TTL).
-    Static refresh is expensive — measured in seconds — so it should ideally
-    happen out-of-band (cron, scheduled task). Lazy refresh on a stale static
-    DB will block a single request.
+  * Static GTFS: built in-request only when the DB is *missing*. A rebuild
+    takes tens of seconds, so an expired (older than FIVE_ELEVEN_STATIC_TTL)
+    static DB is served as-is and merely logged; refreshing it is the job of
+    the out-of-band scheduled task (refresh_static_locked).
 
   * Realtime: rebuilt when older than FIVE_ELEVEN_RT_TTL (default 60s, matching
     511's published rate cap). A file lock prevents two concurrent refreshes;
@@ -26,6 +26,7 @@ It never raises for upstream issues so a 511 outage can't take down a request.
 failures.
 """
 
+import concurrent.futures
 import os
 import sqlite3
 import sys
@@ -41,11 +42,15 @@ _cfg = load_config()
 _DB_DIR = _cfg["GTFS_511_DB_DIR"]
 _RT_TTL = _cfg["FIVE_ELEVEN_RT_TTL"]
 _STATIC_TTL = _cfg["FIVE_ELEVEN_STATIC_TTL"]
+_ALERTS_TTL = _cfg["FIVE_ELEVEN_ALERTS_TTL"]
 _ENABLED = _cfg["FIVE_ELEVEN_ENABLED"]
 
 STATIC_DB_PATH = os.path.join(_DB_DIR, "gtfs_511_static.sqlite")
 RT_DB_PATH = os.path.join(_DB_DIR, "gtfs_511_rt.sqlite")
 _LOCK_DB_PATH = os.path.join(_DB_DIR, "refresh.lock.sqlite")
+# Raw ServiceAlerts protobuf, kept between RT refreshes so alerts can have their
+# own (longer) TTL while the RT snapshot is rebuilt every minute.
+_ALERTS_CACHE_PATH = os.path.join(_DB_DIR, "alerts.pb")
 
 
 @dataclass
@@ -149,7 +154,17 @@ def refresh_if_stale(metrics: RefreshMetrics | None = None) -> RefreshOutcome:
     static_age = _age(static_db.static_refreshed_at(STATIC_DB_PATH))
     rt_age = _age(rt_db.rt_refreshed_at(RT_DB_PATH))
 
-    static_stale = static_age is None or static_age >= _STATIC_TTL
+    # An in-request static rebuild takes ~45 s and would blow the refresh lock's
+    # timeout, so a merely *expired* static DB is served as-is and left to the
+    # scheduled task. Only a completely missing static DB is built here.
+    static_missing = static_age is None
+    if not static_missing and static_age >= _STATIC_TTL:
+        print(
+            f"gtfs511 static DB is stale ({static_age}s old); serving anyway — "
+            "scheduled rebuild is overdue",
+            file=sys.stderr,
+        )
+    static_stale = static_missing
     rt_stale = rt_age is None or rt_age >= _RT_TTL
 
     if not static_stale and not rt_stale:
@@ -185,8 +200,7 @@ def refresh_if_stale(metrics: RefreshMetrics | None = None) -> RefreshOutcome:
     with _refresh_lock():
         metrics.waited_for_lock_seconds = time.monotonic() - wait_start
         # Re-check under lock — a sibling may have just refreshed while we downloaded.
-        static_stale = _age(static_db.static_refreshed_at(STATIC_DB_PATH))
-        static_stale = static_stale is None or static_stale >= _STATIC_TTL
+        static_stale = static_db.static_refreshed_at(STATIC_DB_PATH) is None
         rt_stale = _age(rt_db.rt_refreshed_at(RT_DB_PATH))
         rt_stale = rt_stale is None or rt_stale >= _RT_TTL
 
@@ -261,17 +275,61 @@ def _build_static(zip_bytes: bytes, metrics: RefreshMetrics) -> None:
 
 
 def _download_rt_data(metrics: RefreshMetrics) -> tuple[bytes, bytes | None]:
-    tu = download.download_tripupdates()
+    """Fetch tripupdates (always) and alerts (only when the alert cache is stale).
+
+    The two run concurrently: they are independent HTTP requests and 511 is
+    slow enough that serialising them costs most of a second.
+    """
+    alerts_fresh = _cached_alerts_bytes()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        tu_future = pool.submit(download.download_tripupdates)
+        al_future = (
+            pool.submit(download.download_servicealerts) if alerts_fresh is None else None
+        )
+        tu = tu_future.result()  # propagates: no tripupdates means no refresh
+        alerts_bytes = alerts_fresh
+        if al_future is not None:
+            try:
+                al = al_future.result()
+                metrics.alerts_download_bytes = al.size
+                metrics.alerts_download_seconds = al.elapsed_s
+                alerts_bytes = al.bytes_
+                _store_alerts_bytes(al.bytes_)
+            except download.FiveElevenError as e:  # noqa: BLE001 — alerts are optional
+                print(f"gtfs511 alerts download failed: {e}", file=sys.stderr)
+                alerts_bytes = None
     metrics.rt_download_bytes = tu.size
     metrics.rt_download_seconds = tu.elapsed_s
-    try:
-        al = download.download_servicealerts()
-        metrics.alerts_download_bytes = al.size
-        metrics.alerts_download_seconds = al.elapsed_s
-        alerts_bytes = al.bytes_
-    except download.FiveElevenError:
-        alerts_bytes = None
     return tu.bytes_, alerts_bytes
+
+
+def _cached_alerts_bytes() -> bytes | None:
+    """Return the cached alerts protobuf if younger than the alerts TTL."""
+    try:
+        age = time.time() - os.path.getmtime(_ALERTS_CACHE_PATH)
+    except OSError:
+        return None
+    if age >= _ALERTS_TTL:
+        return None
+    try:
+        with open(_ALERTS_CACHE_PATH, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _store_alerts_bytes(data: bytes) -> None:
+    tmp = f"{_ALERTS_CACHE_PATH}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, _ALERTS_CACHE_PATH)
+    except OSError as e:  # noqa: BLE001 — cache write failure is non-fatal
+        print(f"gtfs511 alerts cache write failed: {e}", file=sys.stderr)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _build_rt(tu_bytes: bytes, alerts_bytes: bytes | None, metrics: RefreshMetrics) -> None:

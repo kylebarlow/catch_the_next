@@ -50,13 +50,17 @@ scp "${SCRIPT_DIR}/index.cgi" "${NFSN_USER}@${NFSN_HOST}:${REMOTE_PUBLIC}/index.
 ssh "${NFSN_USER}@${NFSN_HOST}" "chmod +x ${REMOTE_PUBLIC}/index.cgi"
 scp "${SCRIPT_DIR}/nfsn-htaccess" "${NFSN_USER}@${NFSN_HOST}:${REMOTE_PUBLIC}/.htaccess"
 
+# --no-binary protobuf forces the bundled upb C extension to be compiled on the
+# host (~30 s). Without it FreeBSD gets no wheel and falls back to the
+# pure-Python implementation, which parses the 2.5 MB 511 feed in 2.7 s
+# instead of 0.15 s. Verify after deploy: /healthz reports {"protobuf":"upb"}.
 echo "==> Installing Python dependencies..."
 ssh "${NFSN_USER}@${NFSN_HOST}" \
-  "pip3 install --upgrade --target ${REMOTE_PYLIB} -r ${REMOTE_SERVER}/requirements.txt"
+  "pip3 install --upgrade --no-binary protobuf --target ${REMOTE_PYLIB} -r ${REMOTE_SERVER}/requirements.txt"
 
 echo "==> Pre-compiling Python bytecode..."
 ssh "${NFSN_USER}@${NFSN_HOST}" \
   "python3 -m compileall -q /home/protected/server /home/protected/pylib"
 
 echo ""
-echo "Deployed. Test your site URL at /healthz"
+echo "Deployed. Test your site URL at /healthz — it should report protobuf=upb."

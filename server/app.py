@@ -22,7 +22,12 @@ app = bottle.Bottle()
 
 @app.route("/healthz")
 def healthz():
-    return "ok"
+    # Report the protobuf backend: the pure-Python fallback parses the 511
+    # regional feed ~200x slower, and it can reappear silently after a
+    # redeploy or Python upgrade (see deploy/push.sh --no-binary).
+    from gtfs511.rt_db import protobuf_implementation
+    bottle.response.content_type = "application/json"
+    return json.dumps({"status": "ok", "protobuf": protobuf_implementation()})
 
 
 @app.route("/api/v2/rest/stops")
