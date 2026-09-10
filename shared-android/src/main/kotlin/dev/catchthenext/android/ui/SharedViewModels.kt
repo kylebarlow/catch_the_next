@@ -27,6 +27,8 @@ class SharedViewModelDeps(
     val syncStateStore: SyncStateStore,
     val favoritesSyncController: FavoritesSyncController,
     val peerLabel: String,  // "watch" on phone, "phone" on wear
+    /** Wear passes true so a watch with no phone/WiFi nearby can still fall back to GPS. */
+    val gpsFallback: Boolean = false,
 )
 
 /**
@@ -35,15 +37,17 @@ class SharedViewModelDeps(
  */
 fun createSharedViewModel(modelClass: Class<*>, deps: SharedViewModelDeps): ViewModel? = when {
     modelClass.isAssignableFrom(DeparturesViewModel::class.java) -> {
-        val pipeline = departuresPipeline(deps.context, deps.client, deps.favoritesManager)
+        val pipeline = departuresPipeline(
+            deps.context, deps.client, deps.favoritesManager, gpsFallback = deps.gpsFallback,
+        )
         DeparturesViewModel(
             favoritesCountFlow = deps.favoritesManager.favoritesFlow().map { it.size }.distinctUntilChanged(),
             quickCacheRead = pipeline::quickCacheRead,
-            computeState = pipeline::computeState,
+            computeState = { force, onIntermediate -> pipeline.computeState(force, onIntermediate) },
         )
     }
     modelClass.isAssignableFrom(FavoritesViewModel::class.java) -> {
-        val locationProvider = LocationProvider(deps.context)
+        val locationProvider = LocationProvider(deps.context, deps.gpsFallback)
         val store = DistanceUnitStore(deps.context)
         val dataStore = TileDataStore(deps.context)
         FavoritesViewModel(

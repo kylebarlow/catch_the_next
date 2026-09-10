@@ -39,7 +39,7 @@ class DeparturesViewModelTest {
     @Test
     fun `init loads state from computeState`() = runTest(testDispatcher) {
         val vm = DeparturesViewModel(
-            computeState = { TileState.NetworkError("timeout") },
+            computeState = { _, _ -> TileState.NetworkError("timeout") },
             ioDispatcher = testDispatcher,
         )
         val state = vm.ui.value as DeparturesUi.Loaded
@@ -54,7 +54,7 @@ class DeparturesViewModelTest {
             StopWithDepartures(stop(1L), 0.0, listOf(cachedDep(5L), cachedDep(10L)), now),
         )
         val vm = DeparturesViewModel(
-            computeState = { TileState.Ready(stops, now) },
+            computeState = { _, _ -> TileState.Ready(stops, now) },
             ioDispatcher = testDispatcher,
         )
         val state = vm.ui.value as DeparturesUi.Loaded
@@ -67,7 +67,7 @@ class DeparturesViewModelTest {
     fun `force=true is forwarded to computeState`() = runTest(testDispatcher) {
         var receivedForce = false
         val vm = DeparturesViewModel(
-            computeState = { force ->
+            computeState = { force, _ ->
                 receivedForce = force
                 TileState.NoFavorites
             },
@@ -82,7 +82,7 @@ class DeparturesViewModelTest {
         var receivedForce = true
         var clock = 0L
         val vm = DeparturesViewModel(
-            computeState = { force ->
+            computeState = { force, _ ->
                 receivedForce = force
                 TileState.NoFavorites
             },
@@ -99,7 +99,7 @@ class DeparturesViewModelTest {
         var runs = 0
         var clock = 0L
         val vm = DeparturesViewModel(
-            computeState = { runs++; TileState.NoFavorites },
+            computeState = { _, _ -> runs++; TileState.NoFavorites },
             ioDispatcher = testDispatcher,
             now = { clock },
         )
@@ -115,7 +115,7 @@ class DeparturesViewModelTest {
         var runs = 0
         var clock = 0L
         val vm = DeparturesViewModel(
-            computeState = { runs++; TileState.NoFavorites },
+            computeState = { _, _ -> runs++; TileState.NoFavorites },
             ioDispatcher = testDispatcher,
             now = { clock },
         )
@@ -128,7 +128,7 @@ class DeparturesViewModelTest {
     fun `force bypasses the debounce window`() = runTest(testDispatcher) {
         var runs = 0
         val vm = DeparturesViewModel(
-            computeState = { runs++; TileState.NoFavorites },
+            computeState = { _, _ -> runs++; TileState.NoFavorites },
             ioDispatcher = testDispatcher,
             now = { 0L },
         )
@@ -141,7 +141,7 @@ class DeparturesViewModelTest {
         var runs = 0
         val counts = MutableStateFlow(0)
         val vm = DeparturesViewModel(
-            computeState = { runs++; TileState.NoFavorites },
+            computeState = { _, _ -> runs++; TileState.NoFavorites },
             favoritesCountFlow = counts,
             ioDispatcher = testDispatcher,
             now = { 0L },
@@ -154,7 +154,7 @@ class DeparturesViewModelTest {
     @Test
     fun `refresh transitions through Loaded with isRefreshing before final Loaded`() = runTest(testDispatcher) {
         val vm = DeparturesViewModel(
-            computeState = { TileState.NoLocation },
+            computeState = { _, _ -> TileState.NoLocation },
             ioDispatcher = testDispatcher,
         )
         vm.refresh()
@@ -167,7 +167,7 @@ class DeparturesViewModelTest {
     fun `quickCacheRead is called during init`() = runTest(testDispatcher) {
         var quickCalled = false
         val vm = DeparturesViewModel(
-            computeState = { TileState.NoFavorites },
+            computeState = { _, _ -> TileState.NoFavorites },
             quickCacheRead = {
                 quickCalled = true
                 null
@@ -189,7 +189,7 @@ class DeparturesViewModelTest {
         // Hold computeState open so the state published from the cache can be observed.
         val gate = CompletableDeferred<Unit>()
         val vm = DeparturesViewModel(
-            computeState = { gate.await(); TileState.NoLocation },
+            computeState = { _, _ -> gate.await(); TileState.NoLocation },
             quickCacheRead = { cachedReady },
             ioDispatcher = testDispatcher,
         )
@@ -206,11 +206,37 @@ class DeparturesViewModelTest {
     @Test
     fun `null quickCacheRead skips cache path and uses computeState`() = runTest(testDispatcher) {
         val vm = DeparturesViewModel(
-            computeState = { TileState.NetworkError("offline") },
+            computeState = { _, _ -> TileState.NetworkError("offline") },
             quickCacheRead = null,
             ioDispatcher = testDispatcher,
         )
         val state = vm.ui.value as DeparturesUi.Loaded
         assertEquals("offline", (state.tileState as TileState.NetworkError).message)
+    }
+    @Test
+    fun `the pipeline's intermediate state is published before the final one`() = runTest(testDispatcher) {
+        val now = System.currentTimeMillis()
+        val intermediate = TileState.Ready(
+            listOf(StopWithDepartures(stop(1L), 0.0, listOf(cachedDep(5L)), now)),
+            now
+        )
+        val final = TileState.Ready(
+            listOf(StopWithDepartures(stop(2L), 0.0, listOf(cachedDep(7L)), now)),
+            now
+        )
+        // Hold the run open after the intermediate callback so both emissions are observable.
+        val gate = CompletableDeferred<Unit>()
+        val vm = DeparturesViewModel(
+            computeState = { _, onIntermediate -> onIntermediate(intermediate); gate.await(); final },
+            ioDispatcher = testDispatcher,
+        )
+        val during = vm.ui.value as DeparturesUi.Loaded
+        assertEquals(intermediate, during.tileState)
+        assertTrue(during.isRefreshing, "The intermediate state is still flagged refreshing")
+
+        gate.complete(Unit)
+        val after = vm.ui.value as DeparturesUi.Loaded
+        assertEquals(final, after.tileState)
+        assertTrue(!after.isRefreshing)
     }
 }

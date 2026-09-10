@@ -590,3 +590,61 @@ Steps:
   host; raise `RESPONSE_CACHE_TTL`; deploy the June→September server changes
   that are still only in the repo.
 - Complications / ongoing-activity surfaces.
+
+## 14. Location follow-up (packages H–L)
+
+After A–F the tile's *times* refreshed snappily but its *stops* only changed
+once the app was opened. Cause: `quickLocation()` returned null as soon as the
+60 s `LocationCache` expired and the last-known fix was older than 2 min, so
+`computeState` started from the position persisted by the last **app** run —
+possibly hours old — while the one parallel balanced-power attempt (5 s) almost
+never succeeds on a watch away from its phone, and the refresh scope was
+cancelled in `onDestroy` the moment the tile host unbound.
+
+- **H — Instrumentation.** `computeState` logs its start source with an age
+  (`locSource=quick age=42s`) and the outcome of the parallel fix
+  (`fresh fix ok in <ms>ms` / `fresh fix none after <ms>ms`); both
+  `LocationProvider` twins log each `fetchFresh` (provider/priority, elapsed,
+  and the exception path that `runCatching` used to swallow). Tag `Departures`.
+- **I — Newest-wins start location.** `TileDataStore` persists
+  `cached_loc_at` alongside the position; `quickLocation()` returns a
+  `LocationFix` (position + wall clock) built from `LocationCache.getFix()` or
+  the last-known fix at *any* age (still bounded by accuracy, and only seeded
+  into the 60 s cache when it passes the 2 min `isUsable()` test, so a stale fix
+  never short-circuits `locate(PASSIVE)`). `computeState` starts from whichever
+  of the quick and persisted fixes is newer; an untimestamped persisted
+  position (pre-upgrade installs) loses to any quick fix.
+- **J — Render decoupled from the fix.** `computeState(forceFresh,
+  onIntermediate)` publishes the first result as soon as the batch call
+  returns, and only when a refine pass is actually pending. The tile calls
+  `requestUpdate()` from the callback and again only if the final state is a
+  different object; `DeparturesViewModel` publishes it as
+  `Loaded(state, isRefreshing = true)`. With no render waiting on it,
+  `PASSIVE_LOCATION_TIMEOUT_MS` rises 5 s → 15 s.
+- **K — Refresh survives the service instance.** The scope and the in-flight
+  flag moved to the process-wide `TileRefresher`; `onDestroy` no longer cancels
+  anything and the refresh uses `applicationContext` throughout. This does not
+  grant background location (no `ACCESS_BACKGROUND_LOCATION`), but a fix that
+  *does* arrive is persisted for the next tile request and the departures write
+  is never cancelled mid-flight. The shared flag also closes the gap where a
+  recreated service could start a second pipeline run.
+- **L — Rate-limited GPS fallback (wear only).**
+  `LocationProvider(context, gpsFallback = true)` tries one
+  `PRIORITY_HIGH_ACCURACY` fix (`GPS_FALLBACK_TIMEOUT_MS`, 15 s) after the
+  balanced attempt comes back empty, but only when no last-known fix is younger
+  than `GPS_FALLBACK_MIN_FIX_AGE_MS` (10 min, read from the OS so it survives
+  process death) and not more often than `GPS_FALLBACK_MIN_INTERVAL_MS`
+  (5 min). Wear passes `true` from `WearViewModelFactory` and the tile service;
+  phone keeps `false`. The fdroid twin gained a provider choice so its balanced
+  path uses `NETWORK_PROVIDER` and only the fallback/HIGH paths use GPS,
+  matching play. Worst case per tile refresh: 15 s balanced + 15 s GPS, all
+  after the first render, at most once per 5 minutes.
+
+Device checks (with `adb logcat -s Departures`): after >10 min with the app
+closed and having moved, the tile logs `locSource=quick age=…` and fetches
+immediately (I); the first `requestUpdate` precedes the `fresh fix …` line, and
+a selection change logs `refetching for fresh location` then a second render
+(J); swiping away within ~1 s still logs `computeState result=` (K); outdoors
+with the phone out of range and WiFi off, `fresh fix none after 15000ms` is
+followed by `gps fallback: attempting`, and a second visit within 5 min shows
+no further fallback line (L).

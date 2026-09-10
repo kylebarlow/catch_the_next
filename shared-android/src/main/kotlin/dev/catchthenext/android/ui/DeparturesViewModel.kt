@@ -21,7 +21,7 @@ sealed interface DeparturesUi {
 }
 
 class DeparturesViewModel(
-    private val computeState: suspend (forceFresh: Boolean) -> TileState,
+    private val computeState: suspend (forceFresh: Boolean, onIntermediate: suspend (TileState) -> Unit) -> TileState,
     private val quickCacheRead: (suspend () -> TileState?)? = null,
     favoritesCountFlow: Flow<Int>? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -76,13 +76,21 @@ class DeparturesViewModel(
         runMutex.withLock { runCompute(force) }
     }
 
-    /** Runs the pipeline and publishes the result. Callers must hold [runMutex]. */
+    /**
+     * Runs the pipeline and publishes the result. The pipeline's intermediate state (departures
+     * for the location it already had) is published as soon as it lands, still flagged
+     * refreshing, so the screen never waits on the parallel fresh fix. Callers must hold
+     * [runMutex].
+     */
     private suspend fun runCompute(force: Boolean) {
         val current = _ui.value
         if (current is DeparturesUi.Loaded) {
             _ui.value = current.copy(isRefreshing = true)
         }
-        _ui.value = DeparturesUi.Loaded(computeState(force))
+        val state = computeState(force) { intermediate ->
+            _ui.value = DeparturesUi.Loaded(intermediate, isRefreshing = true)
+        }
+        _ui.value = DeparturesUi.Loaded(state)
         lastCompletedAt = now()
     }
 }

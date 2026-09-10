@@ -35,27 +35,13 @@ import dev.catchthenext.android.tile.timeLabel
 import dev.catchthenext.android.tile.updatedAtLabel
 import dev.catchthenext.model.Stop
 import dev.catchthenext.wear.WearGraph
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 @OptIn(ExperimentalHorologistApi::class)
 class ClosestStopTileService : SuspendingTileService() {
-
-    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    // The enter event and the tile request can arrive together; the pipeline (and its location
-    // lookup) must only run once. TransitlandClient.dedupe only collapses the HTTP call.
-    private val refreshInFlight = AtomicBoolean(false)
-
-    override fun onDestroy() {
-        super.onDestroy()
-        refreshScope.cancel()
-    }
 
     /**
      * Fires when the user swipes to the tile — earlier than [tileRequest], so the fetch overlaps
@@ -74,20 +60,38 @@ class ClosestStopTileService : SuspendingTileService() {
      * [force] skips the freshness check for callers that already know the cache is unusable.
      */
     private fun refreshIfStale(reason: String, force: Boolean = false) {
-        refreshScope.launch {
-            val dataStore = TileDataStore(this@ClosestStopTileService)
+        // applicationContext throughout: the refresh outlives this service instance (see
+        // [TileRefresher]), so nothing here may touch the possibly-destroyed service.
+        val appContext = applicationContext
+        TileRefresher.scope.launch {
+            val dataStore = TileDataStore(appContext)
             val cache = dataStore.read()
             val now = System.currentTimeMillis()
             val stale = force || cache.nearbyDepartures.isEmpty() ||
                 cache.nearbyDepartures.any { now - it.fetchedAt > Tuning.TILE_REFRESH_THRESHOLD_MS }
-            if (!stale || !refreshInFlight.compareAndSet(false, true)) return@launch
+            if (!stale || !TileRefresher.inFlight.compareAndSet(false, true)) return@launch
             try {
                 Log.d("Departures", "tile refresh ($reason)")
-                doFetchState(dataStore)
-                TileService.getUpdater(this@ClosestStopTileService)
-                    .requestUpdate(ClosestStopTileService::class.java)
+                val requestUpdate = {
+                    TileService.getUpdater(appContext)
+                        .requestUpdate(ClosestStopTileService::class.java)
+                }
+                // Render as soon as the departures for the location we already had land; the
+                // parallel fresh fix only earns a second render if it changed the selection.
+                val intermediate = AtomicReference<TileState?>(null)
+                val state = departuresPipeline(
+                    appContext,
+                    WearGraph.transitlandClient(),
+                    WearGraph.favoritesManager(appContext),
+                    dataStore,
+                    gpsFallback = true,
+                ).computeState(forceFresh = false) { s ->
+                    intermediate.set(s)
+                    requestUpdate()
+                }
+                if (state !== intermediate.get()) requestUpdate()
             } finally {
-                refreshInFlight.set(false)
+                TileRefresher.inFlight.set(false)
             }
         }
     }
@@ -156,14 +160,6 @@ class ClosestStopTileService : SuspendingTileService() {
         }
         return entry.build()
     }
-
-    private suspend fun doFetchState(dataStore: TileDataStore): TileState =
-        departuresPipeline(
-            this,
-            WearGraph.transitlandClient(),
-            WearGraph.favoritesManager(this),
-            dataStore,
-        ).computeState(forceFresh = false)
 
     private fun buildStateFromCache(
         cache: CachedTileData,

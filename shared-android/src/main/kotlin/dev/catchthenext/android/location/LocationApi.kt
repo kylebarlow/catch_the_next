@@ -12,12 +12,16 @@ fun interface CurrentLocationProvider {
     suspend fun currentLocation(): LatLon?
 }
 
+/** A position together with the wall-clock time it was observed, so callers can compare ages. */
+data class LocationFix(val loc: LatLon, val atMillis: Long)
+
 /**
- * Best-effort location that must return fast: the in-memory cache or a usable last-known fix,
- * never a fresh fix. Lets a caller start its network work immediately and refine afterwards.
+ * Best-effort location that must return fast: the in-memory cache or a last-known fix, never a
+ * fresh fix. Lets a caller start its network work immediately and refine afterwards. The fix
+ * carries its timestamp so a caller holding another candidate can pick the newer of the two.
  */
 fun interface QuickLocationProvider {
-    suspend fun quickLocation(): LatLon?
+    suspend fun quickLocation(): LocationFix?
 }
 
 /** Returns a [CurrentLocationProvider] that always forces a HIGH-accuracy fix. */

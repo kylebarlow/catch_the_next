@@ -5,6 +5,7 @@ import dev.catchthenext.model.Departure
 import dev.catchthenext.model.DepartureTimeSource
 import dev.catchthenext.model.Stop
 import dev.catchthenext.android.location.LatLon
+import dev.catchthenext.android.location.LocationFix
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,6 +17,9 @@ import org.junit.jupiter.api.Test
 class DeparturesPipelineTest {
 
     private val sf = LatLon(37.770, -122.410)
+
+    /** Fixed "now" for the timestamp comparisons; the cache defaults to the same instant. */
+    private val NOW = 1_700_000_000_000L
 
     private fun stop(id: Long, onestop: String = "s-$id") =
         Stop(id, "S$id", "Stop $id", 37.770, -122.410, onestopId = onestop)
@@ -33,12 +37,13 @@ class DeparturesPipelineTest {
         },
         getNearbyStops: suspend (Double, Double) -> List<Stop> = { _, _ -> emptyList() },
         saveFavorites: suspend (List<Stop>) -> Unit = {},
-        cache: CachedTileData = CachedTileData(lat = sf.lat, lon = sf.lon),
+        cache: CachedTileData = CachedTileData(lat = sf.lat, lon = sf.lon, locationAt = NOW),
         persistDepartures: suspend (List<StopWithDepartures>) -> Unit = {},
         hasPermission: Boolean = true,
         location: LatLon? = sf,
-        quickLocation: suspend () -> LatLon? = { null },
-        updateCachedLocation: suspend (Double, Double) -> Unit = { _, _ -> },
+        quickLocation: suspend () -> LocationFix? = { null },
+        updateCachedLocation: suspend (Double, Double, Long) -> Unit = { _, _, _ -> },
+        now: () -> Long = System::currentTimeMillis,
     ): DeparturesPipeline {
         var favs = favorites
         return DeparturesPipeline(
@@ -53,6 +58,7 @@ class DeparturesPipelineTest {
             currentLocation = { location },
             thresholdMeters = { 1609 },
             quickLocation = quickLocation,
+            now = now,
         )
     }
 
@@ -83,7 +89,7 @@ class DeparturesPipelineTest {
             saveFavorites = {},
             readCache = { CachedTileData(lat = sf.lat, lon = sf.lon) },
             persistDepartures = {},
-            updateCachedLocation = { _, _ -> },
+            updateCachedLocation = { _, _, _ -> },
             hasLocationPermission = { false },
             currentLocation = { locationCalled = true; sf },
             thresholdMeters = { 1609 },
@@ -196,11 +202,11 @@ class DeparturesPipelineTest {
             saveFavorites = {},
             readCache = { CachedTileData(lat = sf.lat, lon = sf.lon) },
             persistDepartures = {},
-            updateCachedLocation = { _, _ -> },
+            updateCachedLocation = { _, _, _ -> },
             hasLocationPermission = { true },
             currentLocation = { delay(5_000); events.add("fresh"); sf },
             thresholdMeters = { 1609 },
-            quickLocation = { sf },
+            quickLocation = { LocationFix(sf, NOW) },
         )
         assertTrue(p.computeState(forceFresh = false) is TileState.Ready)
         assertEquals(listOf("batch", "fresh"), events, "The fetch goes out before the fresh fix lands")
@@ -211,7 +217,7 @@ class DeparturesPipelineTest {
         var batches = 0
         val p = pipeline(
             getDeparturesBatch = { ids -> batches++; ids.associateWith { departures(0L) } },
-            quickLocation = { sf },
+            quickLocation = { LocationFix(sf, NOW) },
             location = LatLon(sf.lat + 0.0001, sf.lon),
         )
         assertTrue(p.computeState(forceFresh = false) is TileState.Ready)
@@ -225,7 +231,7 @@ class DeparturesPipelineTest {
         val p = pipeline(
             favorites = listOf(stop(1L), far),
             getDeparturesBatch = { ids -> batches.add(ids); ids.associateWith { departures(0L) } },
-            quickLocation = { sf },
+            quickLocation = { LocationFix(sf, NOW) },
             location = north,
         )
         val state = p.computeState(forceFresh = false)
@@ -241,9 +247,9 @@ class DeparturesPipelineTest {
         var cachedWrites = 0
         val p = pipeline(
             getDeparturesBatch = { ids -> batches++; ids.associateWith { departures(0L) } },
-            quickLocation = { sf },
+            quickLocation = { LocationFix(sf, NOW) },
             location = null,
-            updateCachedLocation = { _, _ -> cachedWrites++ },
+            updateCachedLocation = { _, _, _ -> cachedWrites++ },
         )
         assertTrue(p.computeState(forceFresh = false) is TileState.Ready)
         assertEquals(1, batches)
@@ -267,5 +273,138 @@ class DeparturesPipelineTest {
     fun `no location at all returns NoLocation`() = runTest {
         val p = pipeline(cache = CachedTileData(lat = null, lon = null), quickLocation = { null }, location = null)
         assertEquals(TileState.NoLocation, p.computeState(forceFresh = false))
+    }
+    // --- Newest-wins start location (package I) ---
+
+    /** Two favorites far apart: whichever start location is used decides which one is fetched. */
+    private fun twoFavoritesPipeline(
+        batches: MutableList<List<String>>,
+        cache: CachedTileData,
+        quickLocation: suspend () -> LocationFix?,
+        location: LatLon? = null,
+        updateCachedLocation: suspend (Double, Double, Long) -> Unit = { _, _, _ -> },
+    ) = pipeline(
+        favorites = listOf(stop(1L), Stop(2L, "S2", "Stop 2", north.lat, north.lon, onestopId = "s-2")),
+        getDeparturesBatch = { ids -> batches.add(ids); ids.associateWith { departures(0L) } },
+        cache = cache,
+        quickLocation = quickLocation,
+        location = location,
+        updateCachedLocation = updateCachedLocation,
+        now = { NOW },
+    )
+
+    @Test
+    fun `a quick fix newer than the persisted location wins`() = runTest {
+        val batches = mutableListOf<List<String>>()
+        val p = twoFavoritesPipeline(
+            batches = batches,
+            cache = CachedTileData(lat = north.lat, lon = north.lon, locationAt = NOW - 600_000),
+            quickLocation = { LocationFix(sf, NOW - 60_000) },
+        )
+        assertTrue(p.computeState(forceFresh = false) is TileState.Ready)
+        assertEquals(listOf("s-1"), batches[0], "The newer quick fix picks the stop at sf")
+    }
+
+    @Test
+    fun `a persisted location newer than the quick fix wins`() = runTest {
+        val batches = mutableListOf<List<String>>()
+        val p = twoFavoritesPipeline(
+            batches = batches,
+            cache = CachedTileData(lat = north.lat, lon = north.lon, locationAt = NOW - 60_000),
+            quickLocation = { LocationFix(sf, NOW - 600_000) },
+        )
+        assertTrue(p.computeState(forceFresh = false) is TileState.Ready)
+        assertEquals(listOf("s-2"), batches[0], "The newer persisted position picks the northern stop")
+    }
+
+    @Test
+    fun `a persisted location with no timestamp loses to any quick fix`() = runTest {
+        val batches = mutableListOf<List<String>>()
+        val p = twoFavoritesPipeline(
+            batches = batches,
+            cache = CachedTileData(lat = north.lat, lon = north.lon, locationAt = null),
+            quickLocation = { LocationFix(sf, NOW - 6 * 60 * 60 * 1000L) },
+        )
+        assertTrue(p.computeState(forceFresh = false) is TileState.Ready)
+        assertEquals(listOf("s-1"), batches[0], "An untimestamped persisted position is older than anything")
+    }
+
+    @Test
+    fun `a null quick fix falls back to the persisted location`() = runTest {
+        val batches = mutableListOf<List<String>>()
+        val p = twoFavoritesPipeline(
+            batches = batches,
+            cache = CachedTileData(lat = north.lat, lon = north.lon, locationAt = NOW - 600_000),
+            quickLocation = { null },
+        )
+        assertTrue(p.computeState(forceFresh = false) is TileState.Ready)
+        assertEquals(listOf("s-2"), batches[0])
+    }
+
+    @Test
+    fun `the fresh fix is persisted with the injected now`() = runTest {
+        val writes = mutableListOf<Triple<Double, Double, Long>>()
+        val p = pipeline(
+            quickLocation = { LocationFix(sf, NOW - 600_000) },
+            location = north,
+            updateCachedLocation = { lat, lon, at -> writes.add(Triple(lat, lon, at)) },
+            now = { NOW },
+        )
+        p.computeState(forceFresh = false)
+        assertEquals(listOf(Triple(north.lat, north.lon, NOW)), writes)
+    }
+
+    // --- Intermediate result callback (package J) ---
+
+    @Test
+    fun `onIntermediate fires before a slow fresh fix completes`() = runTest {
+        val events = mutableListOf<String>()
+        val p = DeparturesPipeline(
+            getDeparturesBatch = { ids -> events.add("batch"); ids.associateWith { departures(0L) } },
+            getNearbyStops = { _, _ -> emptyList() },
+            getFavorites = { listOf(stop(1L)) },
+            saveFavorites = {},
+            readCache = { CachedTileData(lat = sf.lat, lon = sf.lon, locationAt = NOW) },
+            persistDepartures = {},
+            updateCachedLocation = { _, _, _ -> },
+            hasLocationPermission = { true },
+            currentLocation = { delay(5_000); events.add("fresh"); sf },
+            thresholdMeters = { 1609 },
+            quickLocation = { LocationFix(sf, NOW) },
+        )
+        val states = mutableListOf<TileState>()
+        p.computeState(forceFresh = false) { events.add("intermediate"); states.add(it) }
+        assertEquals(listOf("batch", "intermediate", "fresh"), events)
+        assertEquals(1, states.size)
+        assertTrue(states[0] is TileState.Ready)
+    }
+
+    @Test
+    fun `onIntermediate fires exactly once when the fresh fix forces a refetch`() = runTest {
+        val batches = mutableListOf<List<String>>()
+        val far = Stop(2L, "S2", "Stop 2", north.lat, north.lon, onestopId = "s-2")
+        val calls = mutableListOf<TileState>()
+        val p = pipeline(
+            favorites = listOf(stop(1L), far),
+            getDeparturesBatch = { ids -> batches.add(ids); ids.associateWith { departures(0L) } },
+            quickLocation = { LocationFix(sf, NOW) },
+            location = north,
+        )
+        val state = p.computeState(forceFresh = false) { calls.add(it) }
+        assertEquals(2, batches.size)
+        assertEquals(1, calls.size, "The intermediate state is published once, before the refine pass")
+        assertTrue(state !== calls[0], "The refetch produced a different final state")
+    }
+
+    @Test
+    fun `onIntermediate does not fire when there is no start location`() = runTest {
+        var calls = 0
+        val p = pipeline(
+            cache = CachedTileData(lat = null, lon = null),
+            quickLocation = { null },
+            location = sf,
+        )
+        assertTrue(p.computeState(forceFresh = false) { calls++ } is TileState.Ready)
+        assertEquals(0, calls, "Nothing to show until the awaited fix lands")
     }
 }

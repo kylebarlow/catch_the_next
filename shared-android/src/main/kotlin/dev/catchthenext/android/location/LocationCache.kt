@@ -9,14 +9,26 @@ object LocationCache {
     private val cached = AtomicReference<LatLon?>(null)
     private val cachedAt = AtomicLong(0L)
 
-    fun get(): LatLon? {
+    /** When the last high-accuracy (GPS) fallback attempt was started; 0 if never this process. */
+    private val gpsAttemptAt = AtomicLong(0L)
+    val lastGpsAttemptAt: Long get() = gpsAttemptAt.get()
+
+    fun get(): LatLon? = getFix()?.loc
+
+    /** The cached fix with the time it was stored, or null once past [PASSIVE_CACHE_TTL_MS]. */
+    fun getFix(): LocationFix? {
         val loc = cached.get() ?: return null
-        val age = System.currentTimeMillis() - cachedAt.get()
-        return if (age <= PASSIVE_CACHE_TTL_MS) loc else null
+        val at = cachedAt.get()
+        val age = System.currentTimeMillis() - at
+        return if (age <= PASSIVE_CACHE_TTL_MS) LocationFix(loc, at) else null
     }
 
     fun put(loc: LatLon) {
         cached.set(loc)
         cachedAt.set(System.currentTimeMillis())
+    }
+
+    fun markGpsAttempt() {
+        gpsAttemptAt.set(System.currentTimeMillis())
     }
 }

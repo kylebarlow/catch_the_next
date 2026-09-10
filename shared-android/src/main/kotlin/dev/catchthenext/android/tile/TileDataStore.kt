@@ -3,6 +3,7 @@ package dev.catchthenext.android.tile
 import android.content.Context
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.google.gson.reflect.TypeToken
@@ -18,14 +19,16 @@ class TileDataStore(private val context: Context) {
     object Keys {
         val lat = doublePreferencesKey("cached_lat")
         val lon = doublePreferencesKey("cached_lon")
+        val locationAt = longPreferencesKey("cached_loc_at")
         // v2 schema: one JSON blob for all nearby stops (replaces single-stop closestStopId + departuresJson)
         val nearbyDeparturesJson = stringPreferencesKey("nearby_departures_v2")
     }
 
-    suspend fun updateLocation(lat: Double, lon: Double) {
+    suspend fun updateLocation(lat: Double, lon: Double, at: Long = System.currentTimeMillis()) {
         context.tileDataStore.edit { prefs ->
             prefs[Keys.lat] = lat
             prefs[Keys.lon] = lon
+            prefs[Keys.locationAt] = at
         }
     }
 
@@ -54,6 +57,7 @@ class TileDataStore(private val context: Context) {
         return CachedTileData(
             lat = prefs[Keys.lat],
             lon = prefs[Keys.lon],
+            locationAt = prefs[Keys.locationAt],
             nearbyDepartures = nearby
         )
     }
@@ -69,5 +73,7 @@ data class CachedStopDepartures(
 data class CachedTileData(
     val lat: Double?,
     val lon: Double?,
+    /** When [lat]/[lon] were observed. Null on installs that predate the key — older than anything. */
+    val locationAt: Long? = null,
     val nearbyDepartures: List<CachedStopDepartures> = emptyList()
 )

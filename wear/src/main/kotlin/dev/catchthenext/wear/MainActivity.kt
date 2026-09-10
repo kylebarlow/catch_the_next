@@ -139,6 +139,8 @@ class WearViewModelFactory(private val context: Context) : ViewModelProvider.Fac
             syncStateStore = WearGraph.syncStateStore(context),
             favoritesSyncController = WearGraph.favoritesSyncController(),
             peerLabel = "phone",
+            // A watch out of range of its phone and off WiFi has no other way to locate itself.
+            gpsFallback = true,
         )
         return createSharedViewModel(modelClass, deps) as? T
             ?: throw IllegalArgumentException("Unknown ViewModel: $modelClass")

@@ -57,8 +57,30 @@ object Tuning {
     /** A departure keeps showing as "Now" for this long after its instant. */
     const val TILE_NOW_GRACE_MS = 60_000L
 
-    /** Timeout for a PASSIVE fresh-fix attempt once last-known is unusable. */
-    const val PASSIVE_LOCATION_TIMEOUT_MS = 5_000L
+    /**
+     * Timeout for a PASSIVE fresh-fix attempt once last-known is unusable. Since package J the
+     * tile and the departures screen render from the quick/persisted location first and only
+     * re-render if the fresh fix changes the stop selection, so this no longer gates any paint:
+     * only the first-run "no location anywhere" path and `FavoritesViewModel`'s initial distance
+     * lookup wait on it, and both already tolerate a null or late result. 15 s gives a watch
+     * relaying through a phone enough time to answer.
+     */
+    const val PASSIVE_LOCATION_TIMEOUT_MS = 15_000L
+
+    /**
+     * Timeout for the wear-only high-accuracy (GPS) fallback tried after a balanced-power fix
+     * came back empty. Runs after the first render, so it costs latency only for the refine pass.
+     */
+    const val GPS_FALLBACK_TIMEOUT_MS = 15_000L
+
+    /**
+     * The GPS fallback is skipped when the OS already holds a last-known fix younger than this
+     * (read from the OS, so it survives process death).
+     */
+    const val GPS_FALLBACK_MIN_FIX_AGE_MS = 10 * 60 * 1000L
+
+    /** Minimum spacing between GPS fallback attempts — the battery guard on the whole feature. */
+    const val GPS_FALLBACK_MIN_INTERVAL_MS = 5 * 60 * 1000L
 
     // OkHttp budgets for the wear app. The uncached server path is ~10 s today; drop these to
     // 10 / 12 / 15 s once the server's 511 realtime rebuild moves out of the request path.
