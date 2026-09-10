@@ -22,10 +22,15 @@ class TransitlandClient(
     private val apiKey: String,
     private val baseUrl: String = "http://localhost:39217/api/v2/rest",
     private val userAgent: String = "CatchTheNext/1.0 (Android; +https://codeberg.org/ursidaureus/catch_the_next)",
+    connectTimeoutMs: Long = 15_000L,
+    readTimeoutMs: Long = 30_000L,
+    /** Bounds the whole call, not just each read; 0 disables it (OkHttp's default). */
+    callTimeoutMs: Long = 0L,
 ) : TransitApi {
     private val http = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
+        .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
+        .callTimeout(callTimeoutMs, TimeUnit.MILLISECONDS)
         .addInterceptor { chain ->
             val req = chain.request().newBuilder()
                 .header("User-Agent", userAgent)

@@ -16,6 +16,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,6 +45,7 @@ import dev.catchthenext.android.tile.timeLabel
 import dev.catchthenext.android.ui.DeparturesUi
 import dev.catchthenext.android.ui.DeparturesViewModel
 import dev.catchthenext.wear.tile.TileColors
+import kotlinx.coroutines.delay
 
 @Composable
 fun DeparturesScreen(navController: NavController, viewModel: DeparturesViewModel) {
@@ -123,10 +127,16 @@ private fun DeparturesReadyContent(
     navController: NavController,
     viewModel: DeparturesViewModel,
 ) {
-    val groups = groupDepartures(
-        stops = state.stops,
-        filter = { it.currentMinutes() in 0..59 },
-    )
+    // groupDepartures and freshnessLabel read the wall clock internally, so re-key them on a
+    // value that advances at each minute boundary to make the labels tick without a fetch.
+    val now = minuteTicker()
+    val groups = remember(state, now) {
+        groupDepartures(
+            stops = state.stops,
+            filter = { it.currentMinutes() in 0..59 },
+        )
+    }
+    val freshness = remember(state, now) { freshnessLabel(state.fetchedAt) }
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -145,7 +155,7 @@ private fun DeparturesReadyContent(
             items(groups) { group -> GroupedDepartureRow(group) }
         }
 
-        item { Text(freshnessLabel(state.fetchedAt), color = Color(TileColors.textDim)) }
+        item { Text(freshness, color = Color(TileColors.textDim)) }
 
         item {
             Chip(
@@ -169,6 +179,19 @@ private fun DeparturesReadyContent(
             )
         }
     }
+}
+
+/** Emits `System.currentTimeMillis()` again at every wall-clock minute boundary. */
+@Composable
+private fun minuteTicker(): Long {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000L - (System.currentTimeMillis() % 60_000L))
+            now = System.currentTimeMillis()
+        }
+    }
+    return now
 }
 
 @Composable

@@ -58,6 +58,24 @@ data class CachedStopFetch(
     val isStale: Boolean = false,
 )
 
+/**
+ * The favorites the tile/app shows for a position: everything within [thresholdMeters] (nearest
+ * first, capped at [maxStops]), or the single closest favorite when none are in range. Empty only
+ * when [favorites] is empty. Pure, so the pipeline can compare two positions' selections cheaply.
+ */
+fun selectStops(
+    favorites: List<Stop>,
+    lat: Double,
+    lon: Double,
+    thresholdMeters: Int,
+    maxStops: Int = Tuning.MAX_BATCH_STOPS,
+): List<Pair<Stop, Double>> {
+    val inRange = favorites.withinMeters(lat, lon, thresholdMeters).take(maxStops)
+    if (inRange.isNotEmpty()) return inRange
+    val closest = favorites.closestTo(lat, lon) ?: return emptyList()
+    return listOf(Pair(closest, haversineMeters(lat, lon, closest.lat, closest.lon)))
+}
+
 suspend fun updateNearbyStopsDepartures(
     lat: Double,
     lon: Double,
@@ -67,13 +85,8 @@ suspend fun updateNearbyStopsDepartures(
     persistDepartures: suspend (List<StopWithDepartures>) -> Unit = {},
     maxStops: Int = Tuning.MAX_BATCH_STOPS,
 ): TileState {
-    val inRange = favorites.withinMeters(lat, lon, thresholdMeters).take(maxStops)
-    val selected: List<Pair<Stop, Double>> = if (inRange.isNotEmpty()) {
-        inRange
-    } else {
-        val closest = favorites.closestTo(lat, lon) ?: return TileState.NoFavorites
-        listOf(Pair(closest, haversineMeters(lat, lon, closest.lat, closest.lon)))
-    }
+    val selected = selectStops(favorites, lat, lon, thresholdMeters, maxStops)
+    if (selected.isEmpty()) return TileState.NoFavorites
 
     val selectedIds = selected.map { it.first.id }
     val result = runCatching { fetchDeparturesBatch(selectedIds) }
@@ -116,6 +129,8 @@ data class GroupedDepartureTime(
     val timeSource: DepartureTimeSource,
     /** Absolute clock label ("3:42 PM") for far-out departures; null for near-term ones. */
     val clockTime: String? = null,
+    /** The departure instant itself, so the tile can render a renderer-side live countdown. */
+    val departureEpochMillis: Long = 0L,
 )
 
 /** Departures at least this many minutes out also show an absolute clock time. */
@@ -143,6 +158,7 @@ fun groupDepartures(
                             minutes = mins,
                             timeSource = it.timeSource,
                             clockTime = if (mins >= ABSOLUTE_TIME_MIN_MINUTES) clockTimeLabel(it.departureEpochMillis) else null,
+                            departureEpochMillis = it.departureEpochMillis,
                         )
                     }.sortedBy { it.minutes }.take(maxPerGroup),
                     agencyName = deps.firstOrNull()?.agencyName,

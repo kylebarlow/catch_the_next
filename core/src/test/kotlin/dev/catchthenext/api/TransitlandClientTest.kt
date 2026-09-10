@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class DepartureDedupTest {
@@ -47,6 +48,32 @@ class DepartureDedupTest {
         assertEquals(null, error2, "Thread 2 threw: $error2")
         assertEquals(1, server.requestCount, "Expected exactly 1 upstream request for two concurrent calls")
         assertEquals(result1, result2, "Both threads should receive identical results")
+        server.shutdown()
+    }
+}
+
+class CallTimeoutTest {
+
+    @Test
+    fun `a response slower than callTimeoutMs fails promptly`() {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setBodyDelay(3, TimeUnit.SECONDS)
+                .setBody("""{"departures":[],"alerts":[]}""")
+                .setResponseCode(200)
+        )
+        server.start()
+        val client = TransitlandClient(
+            apiKey = "test-key",
+            baseUrl = server.url("/api/v2/rest").toString(),
+            callTimeoutMs = 300L,
+        )
+
+        val startedAt = System.currentTimeMillis()
+        assertFailsWith<java.io.IOException> { client.getDepartures(42L) }
+        val elapsed = System.currentTimeMillis() - startedAt
+        assertTrue(elapsed < 2_000, "Should give up on the call timeout, not the body delay (took ${elapsed}ms)")
         server.shutdown()
     }
 }

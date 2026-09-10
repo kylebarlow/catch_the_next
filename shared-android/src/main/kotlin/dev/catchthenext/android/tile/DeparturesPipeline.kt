@@ -12,6 +12,9 @@ import dev.catchthenext.api.StopDepartures
 import dev.catchthenext.api.TransitApi
 import dev.catchthenext.model.Stop
 import dev.catchthenext.storage.FavoritesManager
+import dev.catchthenext.android.location.QuickLocationProvider
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 
 /**
@@ -33,78 +36,111 @@ class DeparturesPipeline(
     private val hasLocationPermission: () -> Boolean,
     private val currentLocation: suspend () -> LatLon?,  // only invoked when permission granted
     private val thresholdMeters: suspend () -> Int,
+    /** Fast, never-blocking location used to start the fetch; see [QuickLocationProvider]. */
+    private val quickLocation: suspend () -> LatLon? = { null },
     private val now: () -> Long = System::currentTimeMillis,
     private val log: (String) -> Unit = {},
 ) {
-    /** Fast cached read for the initial UI frame: only fresh (<TTL) cached stops, else null. */
+    /**
+     * Fast cached read for the initial UI frame. Reaches back [Tuning.QUICK_CACHE_MAX_AGE_MS] so
+     * the user sees their last known departures instead of a spinner, marking anything older than
+     * [Tuning.CACHE_TTL_MS] as `isStale`. Returns null when nothing usable (a cached stop that is
+     * still a favorite, with at least one departure still in the future) remains.
+     */
     suspend fun quickCacheRead(): TileState? {
         val now = now()
         if (!hasLocationPermission()) return TileState.NoPermission
         val favorites = getFavorites()
         if (favorites.isEmpty()) return TileState.NoFavorites
         val cache = readCache()
-        val freshStops = cache.nearbyDepartures.filter { now - it.fetchedAt < Tuning.CACHE_TTL_MS }
-        val stops = freshStops.mapNotNull { cached ->
+        val usable = cache.nearbyDepartures.filter { now - it.fetchedAt < Tuning.QUICK_CACHE_MAX_AGE_MS }
+        val stops = usable.mapNotNull { cached ->
             val stop = favorites.firstOrNull { it.id == cached.stopId } ?: return@mapNotNull null
+            val departures = cached.departures.filter { it.currentMinutes() >= 0 }
+            if (departures.isEmpty()) return@mapNotNull null
             StopWithDepartures(
                 stop = stop,
                 distanceMeters = 0.0,
-                departures = cached.departures.filter { it.currentMinutes() >= 0 },
+                departures = departures,
                 fetchedAt = cached.fetchedAt,
                 alerts = cached.alerts ?: emptyList(),
+                isStale = now - cached.fetchedAt >= Tuning.CACHE_TTL_MS,
             )
         }
         return if (stops.isEmpty()) null
         else TileState.Ready(stops, stops.minOf { it.fetchedAt })
     }
 
-    suspend fun computeState(forceFresh: Boolean): TileState {
+    /**
+     * Fetches departures for the nearby favorites. The network call goes out against the best
+     * location already available ([quickLocation], else the cached one) while a fresh fix is
+     * resolved in parallel; the fetch is only redone if the fresh fix picks different stops.
+     */
+    suspend fun computeState(forceFresh: Boolean): TileState = coroutineScope {
         var favorites = getFavorites()
         val hasPerm = hasLocationPermission()
-        val freshLocation = if (hasPerm) currentLocation() else null
         val cache = readCache()
-        if (freshLocation != null) updateCachedLocation(freshLocation.lat, freshLocation.lon)
-        val lat = freshLocation?.lat ?: cache.lat
-        val lon = freshLocation?.lon ?: cache.lon
-        val location = if (lat != null && lon != null) LatLon(lat, lon) else null
         val threshold = thresholdMeters()
-        log("computeState force=$forceFresh favorites=${favorites.size} hasPerm=$hasPerm loc=${location != null} threshold=$threshold")
-        var state = computeTileState(
-            favorites = favorites,
-            location = location,
-            hasPermission = hasPerm,
-            thresholdMeters = threshold,
-            fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
-                getDeparturesBatch = getDeparturesBatch,
-                cache = cache,
-                stops = favorites,
-                forceFresh = forceFresh,
-            ),
-            persistDepartures = persistDepartures,
-        )
+
+        val quick = if (hasPerm) quickLocation() else null
+        val cached = cache.lat?.let { lat -> cache.lon?.let { lon -> LatLon(lat, lon) } }
+        val startLoc = quick ?: cached
+        val source = if (quick != null) "quick" else if (cached != null) "cache" else "none"
+
+        // Nothing to start from — fall back to waiting for a fix, as before.
+        val freshDeferred = if (hasPerm && startLoc != null) async { currentLocation() } else null
+        val location = startLoc ?: (if (hasPerm) currentLocation() else null)?.also {
+            updateCachedLocation(it.lat, it.lon)
+        }
+
+        log("computeState force=$forceFresh favorites=${favorites.size} hasPerm=$hasPerm loc=${location != null} locSource=$source threshold=$threshold")
+
+        var state = fetchFor(favorites, location, hasPerm, threshold, cache, forceFresh)
+
+        // Refine: if the fresh fix would have selected different stops, redo the fetch for it.
+        val fresh = freshDeferred?.await()
+        if (fresh != null) {
+            updateCachedLocation(fresh.lat, fresh.lon)
+            val before = location?.let { selectStops(favorites, it.lat, it.lon, threshold).map { p -> p.first.id } }
+            val after = selectStops(favorites, fresh.lat, fresh.lon, threshold).map { it.first.id }
+            if (before != after) {
+                log("computeState refetching for fresh location (stops $before -> $after)")
+                state = fetchFor(favorites, fresh, hasPerm, threshold, readCache(), forceFresh)
+            }
+        }
+
         if (state is TileState.Ready) {
             val resolved = resolveStaleStops(state, favorites, getNearbyStops)
             if (resolved != null) {
                 saveFavorites(resolved)
                 favorites = resolved
-                state = computeTileState(
-                    favorites = favorites,
-                    location = location,
-                    hasPermission = hasPerm,
-                    thresholdMeters = threshold,
-                    fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
-                        getDeparturesBatch = getDeparturesBatch,
-                        cache = readCache(),
-                        stops = favorites,
-                        forceFresh = true,
-                    ),
-                    persistDepartures = persistDepartures,
-                )
+                state = fetchFor(favorites, fresh ?: location, hasPerm, threshold, readCache(), forceFresh = true)
             }
         }
         log("computeState result=${state::class.simpleName} stops=${(state as? TileState.Ready)?.stops?.size ?: 0}")
-        return state
+        state
     }
+
+    private suspend fun fetchFor(
+        favorites: List<Stop>,
+        location: LatLon?,
+        hasPerm: Boolean,
+        threshold: Int,
+        cache: CachedTileData,
+        forceFresh: Boolean,
+    ): TileState = computeTileState(
+        favorites = favorites,
+        location = location,
+        hasPermission = hasPerm,
+        thresholdMeters = threshold,
+        fetchDeparturesBatch = makeFetchNetworkDeparturesBatch(
+            getDeparturesBatch = getDeparturesBatch,
+            cache = cache,
+            stops = favorites,
+            forceFresh = forceFresh,
+        ),
+        persistDepartures = persistDepartures,
+    )
 }
 
 /** Wires the Android implementations of the [DeparturesPipeline] collaborators. */
@@ -132,6 +168,7 @@ fun departuresPipeline(
         },
         currentLocation = { locationProvider.currentLocation() },
         thresholdMeters = { distanceStore.thresholdMetersFlow.first() },
+        quickLocation = { locationProvider.quickLocation() },
         log = { Log.d("Departures", it) },
     )
 }

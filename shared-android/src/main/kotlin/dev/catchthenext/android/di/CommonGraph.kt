@@ -20,6 +20,10 @@ open class CommonGraph(
     private val apiKey: String,
     private val baseUrl: String,
     private val userAgent: String? = null,
+    // OkHttp budgets; each app picks its own (the watch is stricter than the phone).
+    private val connectTimeoutMs: Long = 15_000L,
+    private val readTimeoutMs: Long = 30_000L,
+    private val callTimeoutMs: Long = 0L,
 ) {
     @Volatile private var clientRef: TransitApi? = null
     @Volatile private var syncStateStoreRef: SyncStateStore? = null
@@ -36,9 +40,22 @@ open class CommonGraph(
         clientRef ?: run {
             val ctx = requireNotNull(appCtx) { "init(ctx) must be called before transitlandClient()" }
             val delegate = if (userAgent != null) {
-                TransitlandClient(apiKey = apiKey, baseUrl = baseUrl, userAgent = userAgent)
+                TransitlandClient(
+                    apiKey = apiKey,
+                    baseUrl = baseUrl,
+                    userAgent = userAgent,
+                    connectTimeoutMs = connectTimeoutMs,
+                    readTimeoutMs = readTimeoutMs,
+                    callTimeoutMs = callTimeoutMs,
+                )
             } else {
-                TransitlandClient(apiKey = apiKey, baseUrl = baseUrl)
+                TransitlandClient(
+                    apiKey = apiKey,
+                    baseUrl = baseUrl,
+                    connectTimeoutMs = connectTimeoutMs,
+                    readTimeoutMs = readTimeoutMs,
+                    callTimeoutMs = callTimeoutMs,
+                )
             }
             AttributionRecordingClient(delegate = delegate, store = AttributionStore(ctx))
         }.also { clientRef = it }

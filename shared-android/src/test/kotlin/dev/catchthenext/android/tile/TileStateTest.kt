@@ -222,6 +222,45 @@ class TileStateTest {
         assertFalse(nearbyQueried, "No nearby search when nothing is stale")
     }
 
+    // --- selectStops (the pure stop-selection extracted from updateNearbyStopsDepartures) ---
+
+    @Test
+    fun `selectStops keeps only favorites within the threshold, nearest first`() {
+        val near = stop(1L, 37.770, -122.410)
+        val mid = stop(2L, 37.780, -122.410)
+        val veryFar = stop(3L, 37.900, -122.410)
+        val selected = selectStops(listOf(veryFar, mid, near), sfLocation.lat, sfLocation.lon, 1609)
+        assertEquals(listOf(1L, 2L), selected.map { it.first.id })
+    }
+
+    @Test
+    fun `selectStops falls back to the single closest favorite when none are in range`() {
+        val far = stop(1L, 37.900, -122.410)
+        val farther = stop(2L, 38.000, -122.410)
+        val selected = selectStops(listOf(farther, far), sfLocation.lat, sfLocation.lon, 100)
+        assertEquals(listOf(1L), selected.map { it.first.id })
+    }
+
+    @Test
+    fun `selectStops caps the in-range selection at maxStops`() {
+        val stops = (1L..6L).map { stop(it, 37.770 + it * 0.0001, -122.410) }
+        val selected = selectStops(stops, sfLocation.lat, sfLocation.lon, 1609, maxStops = 4)
+        assertEquals(4, selected.size)
+    }
+
+    @Test
+    fun `selectStops returns empty for no favorites`() {
+        assertTrue(selectStops(emptyList(), sfLocation.lat, sfLocation.lon, 1609).isEmpty())
+    }
+
+    @Test
+    fun `groupDepartures carries the departure instant through`() {
+        val s = stop(1L, 37.770, -122.410)
+        val dep = depAt("14", "Ferry Plaza", 5)
+        val groups = groupDepartures(listOf(swd(s, dep)))
+        assertEquals(dep.departureEpochMillis, groups[0].times[0].departureEpochMillis)
+    }
+
     @Test
     fun `groupDepartures groups same route into one entry`() {
         val s = stop(1L, 37.770, -122.410)

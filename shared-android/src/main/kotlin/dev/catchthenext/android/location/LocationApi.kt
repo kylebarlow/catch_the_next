@@ -12,6 +12,14 @@ fun interface CurrentLocationProvider {
     suspend fun currentLocation(): LatLon?
 }
 
+/**
+ * Best-effort location that must return fast: the in-memory cache or a usable last-known fix,
+ * never a fresh fix. Lets a caller start its network work immediately and refine afterwards.
+ */
+fun interface QuickLocationProvider {
+    suspend fun quickLocation(): LatLon?
+}
+
 /** Returns a [CurrentLocationProvider] that always forces a HIGH-accuracy fix. */
 fun LocationProvider.asHighAccuracy(): CurrentLocationProvider =
     CurrentLocationProvider { locate(LocationMode.HIGH) }

@@ -33,6 +33,36 @@ object Tuning {
     /** Cached tile data older than this triggers an async refresh. */
     const val TILE_REFRESH_THRESHOLD_MS = 30_000L
 
-    /** Tile freshness interval requested from the platform. */
+    /**
+     * Tile freshness interval requested from the platform. 60 s matches 511's realtime cadence.
+     * Must stay >= the server's `RESPONSE_CACHE_TTL` (server/config.py, currently 50 s) for
+     * consecutive tile polls to hit the server's response cache; the server side should raise
+     * its TTL to 60 s or more.
+     */
     const val TILE_FRESHNESS_INTERVAL_MS = 60_000L
+
+    /**
+     * How far back [DeparturesPipeline.quickCacheRead] will reach for a first paint. Anything
+     * newer than this is worth showing (with an "Nm ago" label) instead of a spinner; entries
+     * older than [CACHE_TTL_MS] are flagged `isStale`.
+     */
+    const val QUICK_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000L
+
+    /** Ignore non-forced ViewModel refreshes this soon after the last completed run. */
+    const val VM_REFRESH_DEBOUNCE_MS = 15_000L
+
+    /** Max timeline entries emitted per tile (one per upcoming departure instant, plus terminal). */
+    const val TILE_MAX_TIMELINE_SLICES = 8
+
+    /** A departure keeps showing as "Now" for this long after its instant. */
+    const val TILE_NOW_GRACE_MS = 60_000L
+
+    /** Timeout for a PASSIVE fresh-fix attempt once last-known is unusable. */
+    const val PASSIVE_LOCATION_TIMEOUT_MS = 5_000L
+
+    // OkHttp budgets for the wear app. The uncached server path is ~10 s today; drop these to
+    // 10 / 12 / 15 s once the server's 511 realtime rebuild moves out of the request path.
+    const val WEAR_CONNECT_TIMEOUT_MS = 10_000L
+    const val WEAR_READ_TIMEOUT_MS = 20_000L
+    const val WEAR_CALL_TIMEOUT_MS = 25_000L
 }

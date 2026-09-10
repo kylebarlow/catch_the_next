@@ -9,6 +9,7 @@ import android.os.CancellationSignal
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
+import dev.catchthenext.android.tile.Tuning
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -24,8 +25,28 @@ private const val MAX_ACCURACY_METERS = 500f
  * variant carries zero proprietary dependencies. Public API is identical to the play
  * class — call sites in `main` are unchanged.
  */
-class LocationProvider(private val context: Context) : CurrentLocationProvider {
+class LocationProvider(private val context: Context) : CurrentLocationProvider, QuickLocationProvider {
     override suspend fun currentLocation(): LatLon? = locate(LocationMode.PASSIVE)
+
+    /**
+     * The cached fix, or a usable last-known one. Never waits on a fresh fix, so callers can get
+     * their network request in flight while [locate] refines the position in parallel.
+     */
+    override suspend fun quickLocation(): LatLon? = withContext(Dispatchers.IO) {
+        val hasPerm = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasPerm) return@withContext null
+        LocationCache.get()?.let { return@withContext it }
+        lastKnownUsable()?.also { LocationCache.put(it) }
+    }
+
+    private fun lastKnownUsable(): LatLon? = runCatching {
+        val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        manager?.bestLastKnownLocation()
+            ?.takeIf { it.isUsable() }
+            ?.let { LatLon(it.latitude, it.longitude) }
+    }.getOrNull()
 
     suspend fun locate(mode: LocationMode): LatLon? = withContext(Dispatchers.IO) {
         val hasPerm = ContextCompat.checkSelfPermission(
@@ -45,7 +66,7 @@ class LocationProvider(private val context: Context) : CurrentLocationProvider {
                 LocationMode.PASSIVE -> {
                     val last = manager.bestLastKnownLocation()
                     if (last != null && last.isUsable()) LatLon(last.latitude, last.longitude)
-                    else manager.fetchFresh(timeoutMs = 8_000L)
+                    else manager.fetchFresh(timeoutMs = Tuning.PASSIVE_LOCATION_TIMEOUT_MS)
                 }
                 LocationMode.HIGH -> {
                     manager.fetchFresh(timeoutMs = 20_000L)

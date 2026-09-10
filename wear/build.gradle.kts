@@ -71,6 +71,7 @@ dependencies {
     implementation(libs.wear.tiles.material)
     implementation(libs.protolayout)
     implementation(libs.protolayout.material)
+    testImplementation(libs.junit.jupiter)
 }
 
 tasks.withType<Test> {
