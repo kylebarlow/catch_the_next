@@ -12,7 +12,6 @@ import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders
 import androidx.wear.protolayout.material.Text
 import androidx.wear.protolayout.material.Typography
-import androidx.wear.protolayout.material.layouts.PrimaryLayout
 import androidx.wear.tiles.EventBuilders
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
@@ -115,14 +114,19 @@ class ClosestStopTileService : SuspendingTileService() {
         // the fetch has to happen regardless of how recently the departures were written.
         refreshIfStale("tileRequest", force = state == null)
 
+        // Everything below is sized from the device: see [TileFit].
+        val fit = TileFit.of(deviceParams)
         val timeline = TimelineBuilders.Timeline.Builder()
         if (state is TileState.Ready) {
-            buildTimelineSlices(state, System.currentTimeMillis()).forEach { slice ->
-                timeline.addTimelineEntry(sliceEntry(slice, state.fetchedAt, deviceParams))
+            // Slice only on the departures this device will actually show; a boundary for an
+            // invisible fourth group would just re-render an identical tile.
+            val maxGroups = fit.maxGroups(hasHeader = showsStopHeader(state.stops))
+            buildTimelineSlices(state, System.currentTimeMillis(), maxGroups = maxGroups).forEach { slice ->
+                timeline.addTimelineEntry(sliceEntry(slice, state.fetchedAt, fit, deviceParams))
             }
         } else {
-            val layout = state?.let { renderLayout(it, deviceParams) }
-                ?: simpleLayout(deviceParams, "Loading", "departures…")
+            val layout = state?.let { renderLayout(it, fit, deviceParams) }
+                ?: simpleLayout(fit, "Loading", "departures…")
             timeline.addTimelineEntry(entryFor(layout, validUntilMillis = null))
         }
 
@@ -135,16 +139,21 @@ class ClosestStopTileService : SuspendingTileService() {
     private fun sliceEntry(
         slice: TimelineSlice,
         fetchedAt: Long,
+        fit: TileFit,
         deviceParams: DeviceParameters,
     ): TimelineBuilders.TimelineEntry {
-        val groups = groupDepartures(slice.stops, filter = tileDepartureFilter).take(Tuning.TILE_MAX_GROUPS)
+        val hasHeader = showsStopHeader(slice.stops)
+        val groups = groupDepartures(slice.stops, filter = tileDepartureFilter).take(fit.maxGroups(hasHeader))
         val layout = if (groups.isEmpty()) {
-            simpleLayout(deviceParams, "No departures", "in the next hour")
+            simpleLayout(fit, "No departures", "in the next hour", footer = updatedAtLabel(fetchedAt))
         } else {
-            readyLayout(groups, slice.stops, fetchedAt, deviceParams)
+            readyLayout(groups, slice.stops, fetchedAt, fit, deviceParams)
         }
         return entryFor(layout, slice.validUntilMillis)
     }
+
+    /** The stop name is shown as a header only when every row belongs to the same stop. */
+    private fun showsStopHeader(stops: List<StopWithDepartures>): Boolean = stops.size == 1
 
     private fun entryFor(layout: LayoutElement, validUntilMillis: Long?): TimelineBuilders.TimelineEntry {
         val entry = TimelineBuilders.TimelineEntry.Builder()
@@ -209,22 +218,74 @@ class ClosestStopTileService : SuspendingTileService() {
             .addContent(inner)
             .build()
 
-    private fun renderLayout(state: TileState, deviceParams: DeviceParameters): LayoutElement =
+    private fun renderLayout(state: TileState, fit: TileFit, deviceParams: DeviceParameters): LayoutElement =
         when (state) {
-            is TileState.NoFavorites -> simpleLayout(deviceParams, "Add favorites", "in app")
-            is TileState.NoPermission -> simpleLayout(deviceParams, "Open app to", "grant location")
-            is TileState.NoLocation -> simpleLayout(deviceParams, "Getting location…")
-            is TileState.NetworkError -> simpleLayout(deviceParams, "Network error")
+            is TileState.NoFavorites -> simpleLayout(fit, "Add favorites", "in app")
+            is TileState.NoPermission -> simpleLayout(fit, "Open app to", "grant location")
+            is TileState.NoLocation -> simpleLayout(fit, "Getting location…")
+            is TileState.NetworkError -> simpleLayout(fit, "Network error")
             is TileState.Ready -> readyLayout(
-                groupDepartures(state.stops, filter = tileDepartureFilter).take(Tuning.TILE_MAX_GROUPS),
+                groupDepartures(state.stops, filter = tileDepartureFilter)
+                    .take(fit.maxGroups(hasHeader = showsStopHeader(state.stops))),
                 state.stops,
                 state.fetchedAt,
+                fit,
                 deviceParams,
             )
         }
 
-    private fun simpleLayout(deviceParams: DeviceParameters, vararg lines: String): LayoutElement {
+    /**
+     * Root of every tile layout: a content band centred on the screen and a footer pinned to the
+     * bottom edge, as siblings in one Box so the footer's position never depends on how tall the
+     * content turned out. [TileFit] sizes the band so the content it budgets for cannot reach
+     * the footer.
+     */
+    private fun rootLayout(fit: TileFit, content: LayoutElement, footer: String?): LayoutElement {
+        val root = LayoutElementBuilders.Box.Builder()
+            .setWidth(DimensionBuilders.expand())
+            .setHeight(DimensionBuilders.expand())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .addContent(
+                LayoutElementBuilders.Box.Builder()
+                    .setWidth(DimensionBuilders.dp(fit.contentWidthDp))
+                    .setHeight(DimensionBuilders.dp(fit.contentHeightDp))
+                    .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                    .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+                    .addContent(content)
+                    .build()
+            )
+        if (footer != null) {
+            root.addContent(
+                LayoutElementBuilders.Box.Builder()
+                    .setWidth(DimensionBuilders.expand())
+                    .setHeight(DimensionBuilders.expand())
+                    .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                    .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_BOTTOM)
+                    .setModifiers(
+                        ModifiersBuilders.Modifiers.Builder()
+                            .setPadding(
+                                ModifiersBuilders.Padding.Builder()
+                                    .setBottom(DimensionBuilders.dp(fit.footerBottomInsetDp))
+                                    .build()
+                            )
+                            .build()
+                    )
+                    .addContent(
+                        Text.Builder(this, footer)
+                            .setTypography(Typography.TYPOGRAPHY_CAPTION3)
+                            .setColor(ColorBuilders.argb(TileColors.textDim))
+                            .build()
+                    )
+                    .build()
+            )
+        }
+        return root.build()
+    }
+
+    private fun simpleLayout(fit: TileFit, vararg lines: String, footer: String? = null): LayoutElement {
         val col = LayoutElementBuilders.Column.Builder()
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
         lines.forEach { line ->
             col.addContent(
                 Text.Builder(this, line)
@@ -233,69 +294,62 @@ class ClosestStopTileService : SuspendingTileService() {
                     .build()
             )
         }
-        return PrimaryLayout.Builder(deviceParams).setContent(col.build()).build()
+        return rootLayout(fit, col.build(), footer)
     }
 
     private fun readyLayout(
         groups: List<GroupedDeparture>,
         stops: List<StopWithDepartures>,
         fetchedAt: Long,
+        fit: TileFit,
         deviceParams: DeviceParameters,
     ): LayoutElement {
         val col = LayoutElementBuilders.Column.Builder()
             .setWidth(DimensionBuilders.expand())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_START)
+
+        if (showsStopHeader(stops)) {
+            col.addContent(
+                LayoutElementBuilders.Box.Builder()
+                    .setWidth(DimensionBuilders.expand())
+                    .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                    .addContent(
+                        Text.Builder(this, stops[0].stop.stopName.take(fit.headerChars))
+                            .setTypography(Typography.TYPOGRAPHY_CAPTION1)
+                            .setColor(ColorBuilders.argb(TileColors.textDim))
+                            .build()
+                    )
+                    .build()
+            )
+            col.addContent(verticalSpacer(TileFit.HEADER_GAP_DP))
+        }
 
         groups.forEachIndexed { i, group ->
-            if (i > 0) {
-                col.addContent(
-                    LayoutElementBuilders.Spacer.Builder()
-                        .setWidth(DimensionBuilders.expand())
-                        .setHeight(DimensionBuilders.dp(4f))
-                        .build()
-                )
-            }
-            col.addContent(groupedDepartureRow(group, deviceParams))
+            if (i > 0) col.addContent(verticalSpacer(fit.groupSpacerDp))
+            col.addContent(groupedDepartureRow(group, fit, deviceParams))
         }
 
-        val builder = PrimaryLayout.Builder(deviceParams)
-        if (stops.size == 1) {
-            builder.setPrimaryLabelTextContent(
-                Text.Builder(this, stops[0].stop.stopName.take(22))
-                    .setTypography(Typography.TYPOGRAPHY_CAPTION1)
-                    .setColor(ColorBuilders.argb(TileColors.textDim))
-                    .build()
-            )
-        }
-        return builder
-            .setContent(col.build())
-            .setSecondaryLabelTextContent(
-                Text.Builder(this, updatedAtLabel(fetchedAt))
-                    .setTypography(Typography.TYPOGRAPHY_CAPTION3)
-                    .setColor(ColorBuilders.argb(TileColors.textDim))
-                    .build()
-            )
-            .build()
+        return rootLayout(fit, col.build(), footer = updatedAtLabel(fetchedAt))
     }
 
-    private fun groupedDepartureRow(group: GroupedDeparture, deviceParams: DeviceParameters): LayoutElement {
-        val stopTag = if (group.showStopTag) " · ${group.stopName.take(8)}" else ""
-        val routeLabel = buildString {
-            append(group.routeShortName)
-            if (group.headsign.isNotBlank()) append(" → ${group.headsign.take(14)}")
-            append(stopTag)
-        }
+    private fun verticalSpacer(heightDp: Float): LayoutElement =
+        LayoutElementBuilders.Spacer.Builder()
+            .setWidth(DimensionBuilders.expand())
+            .setHeight(DimensionBuilders.dp(heightDp))
+            .build()
+
+    private fun groupedDepartureRow(
+        group: GroupedDeparture,
+        fit: TileFit,
+        deviceParams: DeviceParameters,
+    ): LayoutElement {
+        val routeLabel = fit.routeLabel(group.routeShortName, group.headsign, group.hasAlert)
 
         val timesRow = LayoutElementBuilders.Row.Builder()
             .setWidth(DimensionBuilders.expand())
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
         group.times.forEachIndexed { i, time ->
-            if (i > 0) {
-                timesRow.addContent(
-                    LayoutElementBuilders.Spacer.Builder()
-                        .setWidth(DimensionBuilders.dp(6f))
-                        .setHeight(DimensionBuilders.dp(1f))
-                        .build()
-                )
-            }
+            if (i > 0) timesRow.addContent(horizontalSpacer(6f))
             // Dynamic countdown so "5m" ticks down between tile requests; static on old renderers.
             val text = if (supportsDynamicExpressions(deviceParams)) {
                 Text.Builder(
@@ -313,37 +367,41 @@ class ClosestStopTileService : SuspendingTileService() {
                     .build()
             )
         }
+        if (group.showStopTag) {
+            // The stop tag rides on the times row, which always has spare width, so the route
+            // label row is free for the headsign. Last in the row, so it ellipsises rather than
+            // the times (Material Text is single-line, ellipsis-end by default).
+            timesRow.addContent(horizontalSpacer(8f))
+            timesRow.addContent(
+                Text.Builder(this, group.stopName.take(STOP_TAG_MAX_CHARS))
+                    .setTypography(Typography.TYPOGRAPHY_CAPTION2)
+                    .setColor(ColorBuilders.argb(TileColors.textDim))
+                    .build()
+            )
+        }
 
+        val routeLabelText = Text.Builder(this, routeLabel)
+            .setTypography(Typography.TYPOGRAPHY_BODY2)
+            .setColor(ColorBuilders.argb(TileColors.textPrimary))
+            .build()
         val routeLabelRow = if (group.hasAlert) {
             LayoutElementBuilders.Row.Builder()
+                .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
                 .addContent(
                     LayoutElementBuilders.Image.Builder()
                         .setResourceId(ALERT_ICON_ID)
-                        .setWidth(DimensionBuilders.dp(12f))
-                        .setHeight(DimensionBuilders.dp(12f))
+                        .setWidth(DimensionBuilders.dp(TileFit.ALERT_ICON_DP))
+                        .setHeight(DimensionBuilders.dp(TileFit.ALERT_ICON_DP))
                         .setColorFilter(LayoutElementBuilders.ColorFilter.Builder()
                             .setTint(ColorBuilders.argb(TileColors.warning))
                             .build())
                         .build()
                 )
-                .addContent(
-                    LayoutElementBuilders.Spacer.Builder()
-                        .setWidth(DimensionBuilders.dp(4f))
-                        .setHeight(DimensionBuilders.dp(1f))
-                        .build()
-                )
-                .addContent(
-                    Text.Builder(this, routeLabel)
-                        .setTypography(Typography.TYPOGRAPHY_BODY2)
-                        .setColor(ColorBuilders.argb(TileColors.textPrimary))
-                        .build()
-                )
+                .addContent(horizontalSpacer(TileFit.ALERT_GAP_DP))
+                .addContent(routeLabelText)
                 .build()
         } else {
-            Text.Builder(this, routeLabel)
-                .setTypography(Typography.TYPOGRAPHY_BODY2)
-                .setColor(ColorBuilders.argb(TileColors.textPrimary))
-                .build()
+            routeLabelText
         }
 
         return LayoutElementBuilders.Column.Builder()
@@ -353,6 +411,12 @@ class ClosestStopTileService : SuspendingTileService() {
             .addContent(timesRow.build())
             .build()
     }
+
+    private fun horizontalSpacer(widthDp: Float): LayoutElement =
+        LayoutElementBuilders.Spacer.Builder()
+            .setWidth(DimensionBuilders.dp(widthDp))
+            .setHeight(DimensionBuilders.dp(1f))
+            .build()
 
     override suspend fun resourcesRequest(requestParams: RequestBuilders.ResourcesRequest): ResourceBuilders.Resources {
         return ResourceBuilders.Resources.Builder()
@@ -372,5 +436,8 @@ class ClosestStopTileService : SuspendingTileService() {
 
     companion object {
         private const val ALERT_ICON_ID = "alert_icon"
+
+        /** Upper bound on the stop tag; the renderer ellipsises it further if the row is short. */
+        private const val STOP_TAG_MAX_CHARS = 12
     }
 }

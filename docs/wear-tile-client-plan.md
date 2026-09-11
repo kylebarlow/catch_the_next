@@ -551,8 +551,9 @@ Steps:
    This is mandatory before `targetSdk = 36`.
 3. Delete the renderer-version guard from B4.
 4. Re-run the on-device checks from B, C, D. Wear OS 6 renders all tiles in
-   the system font; re-check the `.take(22)` / `.take(14)` truncations still
-   fit on the Watch6 Classic.
+   the system font; re-check `TileFit`'s line-height table and
+   `AVERAGE_GLYPH_EM` against the new `Typography` (§15) so the group count
+   and headsign trim still fit on the Watch6 Classic.
 5. Optional follow-up: migrate `ClosestStopTileService` from Horologist's
    `SuspendingTileService` to `Material3TileService` (single `suspend`
    `tileResponse`, `ProtoLayoutScope` inlines resources so
@@ -648,3 +649,40 @@ a selection change logs `refetching for fresh location` then a second render
 with the phone out of range and WiFi off, `fresh fix none after 15000ms` is
 followed by `gps fallback: attempting`, and a second visit within 5 min shows
 no further fallback line (L).
+
+## 15. Package M — per-device fit budget (2026-09-10)
+
+Symptom: on smaller screens, or with a larger system font, three two-line
+groups plus the stop-name header overran `PrimaryLayout`'s content slot, and
+the "Updated h:mma" secondary label was clipped or pushed off the bottom.
+
+ProtoLayout has no fit-to-screen primitive, so the tile now sizes itself
+before building the layout. `wear/.../tile/TileFit.kt` is pure arithmetic over
+`DeviceParameters` (width, height, shape, font scale) and is unit-tested for
+every real screen size the app ships to (192–240 dp) at font scales 0.85–1.5:
+
+- **Content band.** A centred box of fixed size. Round: ±0.31·D tall, width =
+  chord of the circle at the band edge minus a bezel inset, so start-aligned
+  rows never run under the bezel. Square: 80 % × 90 %. The band is shrunk
+  further if the footer slot would otherwise collide with it.
+- **Footer.** "Updated h:mma" lives in a sibling box anchored to the bottom of
+  the root, not in the content column, so nothing the content does can move
+  it. `PrimaryLayout` is no longer used by the tile.
+- **Group count.** `maxGroups(hasHeader)` = floor of band height over
+  (36 sp × fontScale + 4 dp spacer), minus the header line, clamped to
+  1..`Tuning.TILE_MAX_GROUPS`. The same count is passed to
+  `buildTimelineSlices` so invisible groups do not create timeline boundaries.
+- **Route label.** `routeLabel()` trims the headsign to a character budget
+  from the band width and BODY2's 14 sp (0.55 em average glyph), drops it
+  below 4 characters, and subtracts the alert icon when shown. The stop tag
+  moved from the label row to the end of the times row, where there is spare
+  width and the renderer's end-ellipsis hits the tag rather than a time.
+
+Line heights (BODY2/CAPTION1 18 sp, CAPTION2 16, CAPTION3 14) were read out
+of protolayout-material 1.2.0's `Typography`; re-verify on the §11 bump.
+
+Device check: on the Watch6 Classic, a single-stop tile with three routes
+shows the stop name, three groups and the Updated label with clear space
+between them; with the system font at the largest setting the tile drops to
+two groups and the Updated label is still fully visible. On a 41 mm Pixel
+Watch (or the 192 dp emulator) the same data shows two groups.

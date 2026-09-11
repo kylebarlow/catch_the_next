@@ -27,7 +27,10 @@ object Tuning {
     /** Radius for a map-pin Add Stop search. */
     const val ADD_STOP_SEARCH_RADIUS_M = 1500
 
-    /** Max departure groups rendered on the tile. */
+    /**
+     * Upper bound on departure groups rendered on the tile. The wear module's `TileFit` lowers
+     * it per device when the screen or the user's font scale cannot hold that many two-line rows.
+     */
     const val TILE_MAX_GROUPS = 3
 
     /** Cached tile data older than this triggers an async refresh. */
